@@ -1,0 +1,13 @@
+# 构建与制图依赖
+# 仅生成 HTML/PDF 时只需 markdown（build_pdf.py 调用本机浏览器，无额外依赖）
+markdown>=3.4
+
+# 重新生成图表时另行安装（需要 data/ 原始数据）
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+geopandas>=0.14
+shapely>=2.0
+pyproj>=3.5
+rasterio>=1.4
+Pillow>=10.0

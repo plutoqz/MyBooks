@@ -1,0 +1,21 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 原始数据（约 1.5 GB，不入库；见 README「数据说明」）
+中国地理知识手册/data/
+
+# 逐节审阅用 HTML（图片内嵌，约 190 MB，可随时用 md2html.py 重新生成）
+中国地理知识手册/html/
+
+# 生成的 PDF（按需本地导出）
+中国地理知识手册/output/*.pdf
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
