@@ -8,6 +8,7 @@ fig3-1 全国地势晕渲图（高程分级设色 + 山体阴影 + 三级阶梯�
 fig3-2 沿 30°N 与 40°N 地形剖面
 fig3-3 三级阶梯示意（块状图）
 """
+from volume1_layout import save_volume_figure
 import math
 import os
 import sys
@@ -26,8 +27,9 @@ from rasterio.warp import Resampling, reproject
 from rasterio.features import rasterize
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_north_arrow,
-                   add_title, new_map_axes, save_fig, set_extent_from, setup)
+from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES,
+                   add_title, draw_borders, load_ne_layer, new_map_axes,
+                   save_fig, set_extent_from, setup)
 from geo_features import STAIR1, STAIR2
 
 SEGS1 = [  # 第一级阶梯界线：昆仑山 / 祁连山 / 横断山东缘
@@ -102,14 +104,22 @@ def build_mosaic():
         from PIL import Image
         return tx, ty, np.asarray(Image.open(src), dtype=np.float64)
 
+    failed = []
     with ThreadPoolExecutor(max_workers=24) as ex:
-        for res in ex.map(work, jobs):
+        for job, res in zip(jobs, ex.map(work, jobs)):
             if res is None:
+                # 旧实现静默 continue，缺失瓦片位置保留 np.zeros 初值，
+                # 于是地表出现成片"海拔 0 m"的矩形色块（绿色方块）。
+                failed.append((job[0], job[1]))
                 continue
             tx, ty, arr = res
             elev = arr[:, :, 0] * 256 + arr[:, :, 1] + arr[:, :, 2] / 256 - 32768
             r, c = ty - y0, tx - x0
             mosaic[r * 256:(r + 1) * 256, c * 256:(c + 1) * 256] = elev
+    if failed:
+        raise RuntimeError(
+            f"{len(failed)} 个 DEM 瓦片缺失（示例 {failed[:5]}），"
+            f"请重试；否则地表会出现海拔 0 m 的矩形空洞")
     return mosaic, x0, y0, Z
 
 
@@ -141,8 +151,9 @@ def build_cache():
     # 陆地掩膜：省界 + 邻国
     gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav", "100000_full.json"))
     land = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)]
-    world = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                       "ne_50m", "ne_50m_admin_0_countries.shp"))
+    # Natural Earth 只提供了 .geojson，原硬编码的 ne_50m/*.shp 并不存在，
+    # 直接 read_file 会抛 DataSourceError 导致整幅图无法重跑。
+    world = load_ne_layer("ne_50m_admin_0_countries")
     geoms = list(land.to_crs(ALBERS).geometry) + list(world.to_crs(ALBERS).geometry)
     mask = rasterize([(g, 1) for g in geoms], out_shape=(h, w),
                      transform=dst_tf, fill=0, dtype="uint8")
@@ -153,6 +164,9 @@ def build_cache():
 
 
 def load_cache():
+    """读取全国 DEM Albers 缓存；缺失时自动构建（首次需下载 z7 瓦片）。"""
+    if not os.path.exists(CACHE):
+        build_cache()
     d = np.load(CACHE)
     return d["dem"], float(d["minx"]), float(d["maxy"])
 
@@ -198,10 +212,7 @@ def fig3_1_relief():
     gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav", "100000_full.json"))
     prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
     dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.boundary.plot(ax=ax, color="#5a5a5a", linewidth=0.3, alpha=0.55, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.8,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
 
     # 境外陆地改为中性灰，突出中国本体
     china_mask = rasterize(list(prov.geometry), out_shape=dem.shape,
@@ -236,7 +247,9 @@ def fig3_1_relief():
                 ha="center", va="center", zorder=8, linespacing=1.5,
                 bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#999999",
                           alpha=0.85))
-    add_north_arrow(ax, 0.955, 0.90, 0.05)
+    # 不画竖直指北针：Albers 等积圆锥投影下只有 105°E 中央经线方向才是图面正北，
+    # 其余位置正北与竖直方向各有偏角，画一个朝上的箭头反而误导读者。
+    # 改为在页脚注明投影参数，读者可据此判读方向。
     set_extent_from(ax, prov)
     add_title(ax, "中国地势晕渲图", "西高东低、呈三级阶梯；虚线为两级阶梯界线（示意），断续线为南海九段线")
 
@@ -250,16 +263,27 @@ def fig3_1_relief():
                       boundaries=ELEV_BINS + [9000], ticks=ELEV_BINS)
     cb.ax.tick_params(labelsize=7.5)
     cb.set_label("海拔（m）", fontsize=8.5)
+    cb.ax.xaxis.set_label_position("top")
 
     save_fig(fig, ax, "fig3-1_中国地势晕渲图.png",
-             footer="数据：AWS Terrain Tiles（ terrarium，Mapzen/OpenStreetMap 等公开数据，重采样至 1.8 km）；投影：Albers 等积圆锥\n"
+             footer="数据：AWS Terrain Tiles（terrarium，Mapzen/OpenStreetMap 等公开数据，重采样至 1.8 km）；"
+                    "投影：Albers 等积圆锥（中央经线 105°E，标准纬线 25°N/47°N），图面正北仅沿 105°E 经线成立\n"
                     "示意地图，阶梯界线与注记为示意，不作为权属划界依据")
 
 
 # ---------------------------------------------------------------- fig 3-2
+def _lonlat_cache():
+    """经纬度规则网格 DEM 缓存；缺失时自动构建。"""
+    fp = os.path.join(DEM_DIR, "china_lonlat_z7.npz")
+    if not os.path.exists(fp):
+        return build_lonlat_cache()
+    npz = np.load(fp)
+    return (npz["grid"], float(npz["lon0"]), float(npz["lat0"]),
+            float(npz["res"]))
+
+
 def fig3_2_profile():
-    npz = np.load(os.path.join(DEM_DIR, "china_lonlat_z7.npz"))
-    grid, glon0, glat0, gres = npz["grid"], float(npz["lon0"]), float(npz["lat0"]), float(npz["res"])
+    grid, glon0, glat0, gres = _lonlat_cache()
 
     fig, axes = plt.subplots(2, 1, figsize=(10.2, 6.4))
     geod = Geod(ellps="WGS84")
@@ -302,7 +326,7 @@ def fig3_2_profile():
              "数据：AWS Terrain Tiles（z7，约 1.2 km 分辨率）；距离沿纬线按 WGS84 椭球计算",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    fig.savefig(os.path.join(FIGURES, "fig3-2_地形剖面图.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig3-2_地形剖面图.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -320,9 +344,6 @@ def build_lonlat_cache():
     np.savez_compressed(os.path.join(DEM_DIR, "china_lonlat_z7.npz"),
                         grid=grid, lon0=lon0, lat0=lat0_top, res=res_deg * 4)
     return grid, lon0, lat0_top, res_deg * 4
-
-
-    print("ch03 terrain done")
 
 
 # ---------------------------------------------------------------- fig 3-3
@@ -369,7 +390,7 @@ def fig3_3_stairs():
     ax.set_axisbelow(True)
     fig.text(0.02, 0.012, "示意图：阶梯高差不按垂直比例绘制", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    fig.savefig(os.path.join(FIGURES, "fig3-3_三级阶梯示意图.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig3-3_三级阶梯示意图.png"), dpi=DPI)
     plt.close(fig)
 
 

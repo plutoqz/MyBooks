@@ -68,7 +68,7 @@ def run():
         "亿元",
         highlight_labels=("2024",),
         footer="数据：深圳市历年国民经济和社会发展统计公报（1980 年为建市初期口径）",
-        nd=0)
+        nd=1)
 
 
 if __name__ == "__main__":

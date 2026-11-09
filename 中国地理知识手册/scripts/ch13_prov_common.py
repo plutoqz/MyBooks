@@ -7,6 +7,7 @@ fig_pop(...)     分区常住人口（七普）与人口密度双联条形图。
 
 政区标注点一律取自 DataV 原始文件（EPSG:4326）的 representative_point()。
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -19,24 +20,45 @@ from rasterio.transform import from_origin
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes)
+                   new_map_axes, safe_union)
 from ch03_terrain import to_albers
-from prov_pipeline import prov_dem, prov_load, relief_rgba_p, to_albers
+from prov_pipeline import (prov_dem, prov_load, raster_china, raster_land,
+                           relief_rgba_p, to_albers)
 from ch13_regions import TagBoard, _save_with_legend
 
 
-def _paper_overlay(shape, land, keep_mask, alpha=0.9):
-    """land 上、keep_mask 之外的像素淡为纸色。"""
+def _paper_overlay(shape, land, keep_mask, alpha=0.9, china=None):
+    """land 上、keep_mask 之外的像素淡为纸色；境外陆地涂成纯白。
+
+    省级图幅是矩形，四角基本都落在邻国境内。若整块陆地都涂淡纸色，
+    图上会出现一个与页面底色（纯白）不同的米白矩形——新疆图就是这样，
+    看过去像贴了一张灰纸。这里把「邻省」与「境外陆地」分开处理：
+    邻省淡纸色（提示本省不含它），境外纯白（与页面无缝）。
+    """
     flat = np.zeros(shape + (4,))
-    flat[..., 0], flat[..., 1], flat[..., 2] = 0.949, 0.941, 0.918
-    flat[..., 3] = np.where(land & (keep_mask == 0), alpha, 0.0)
+    # 邻省纸色要压得很淡：0.949/0.941/0.918 在晕渲旁边读起来像一层地形阴影
+    # （新疆图东南角最明显，看着像山脉延伸出去），降到 0.975 左右只留一点区分。
+    flat[..., 0], flat[..., 1], flat[..., 2] = 0.975, 0.973, 0.966
+    painted = land & (keep_mask == 0)
+    flat[..., 3] = np.where(painted, alpha, 0.0)
+    if china is not None:
+        outside = painted & ~china
+        flat[..., 0][outside] = 1.0
+        flat[..., 1][outside] = 1.0
+        flat[..., 2][outside] = 1.0
+        # alpha 必须给满：留 0.9 会透出底下 ax 的海蓝底色，
+        # 境外区域变成 #f2f8fc，与页面纯白之间显出一道矩形边界。
+        flat[..., 3][outside] = 1.0
     return flat
 
 
 def _load_rivers():
-    return gpd.read_file(os.path.join(
-        DATA, "boundaries", "natural_earth", "ne_50m_rivers_lake_centerlines",
-        "ne_50m_rivers_lake_centerlines.shp")).to_crs(ALBERS)
+    """Natural Earth 河流（支持 geojson/shp 两种落盘格式；缺失时返回空图层）。"""
+    from style import load_ne_layer
+    try:
+        return load_ne_layer("ne_50m_rivers_lake_centerlines").to_crs(ALBERS)
+    except FileNotFoundError:
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=ALBERS)
 
 
 def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
@@ -57,7 +79,7 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     prov = prov_load(adcode)
     raw = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
                                      f"{adcode}_full.json"))  # EPSG:4326
-    union = prov.union_all()
+    union = safe_union(prov)
 
     bx0, by0, bx1, by1 = prov.total_bounds
     ratio = (bx1 - bx0) / (by1 - by0)
@@ -65,18 +87,30 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     fh = min(max(fw / ratio * 0.82, 8.6), 11.4)
     fig, ax = new_map_axes((fw, fh))
     right = 0.73 if inset_names else 0.985
-    fig.subplots_adjust(bottom=map_bottom, top=0.985, left=0.005, right=right)
+    fig.subplots_adjust(bottom=map_bottom, top=0.925, left=0.005, right=right)
+    ax.set_anchor("S")   # aspect=equal 会把 axes 撑满，靠底对齐留出标题位
     ax.set_facecolor(C_SEA)
-    ax.imshow(relief_rgba_p(dem, res), extent=extent, origin="upper",
-              interpolation="bilinear", zorder=1)
-    ax.set_xlim(extent[0], extent[1])
-    ax.set_ylim(extent[2], extent[3])
 
     tf = from_origin(minx, maxy, res, res)
     inside = rasterize([(union, 1)], out_shape=(h, w), transform=tf,
                        fill=0, dtype="uint8")
-    ax.imshow(_paper_overlay((h, w), ~np.isnan(dem), inside), extent=extent,
-              origin="upper", zorder=2.5)
+    # 陆地掩膜用真实政区/国界栅格，而不是 ~isnan(dem)：DEM 栅格只覆盖
+    # 经纬度外包矩形，Albers 下四角必然缺数据，用 isnan 会把角上的陆地
+    # 漏成海蓝楔形块（青海左上角）。
+    land = raster_land(h, w, tf, union)
+    if land is None:
+        land = ~np.isnan(dem)
+    # 海面一律不给高程：重投影在栅格边缘会留下 1~2 列「有效值」窄条，
+    # 直接晕渲会在东侧海面划出一道 0 m 的浅色竖线（台湾图即如此）。
+    dem_show = np.where(land, dem, np.nan)
+    ax.imshow(relief_rgba_p(dem_show, res), extent=extent, origin="upper",
+              interpolation="bilinear", zorder=1)
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+
+    china_px = raster_china(h, w, tf)
+    ax.imshow(_paper_overlay((h, w), land, inside, china=china_px),
+              extent=extent, origin="upper", zorder=2.5)
 
     prov.boundary.plot(ax=ax, color="#4a4a4a", lw=0.5, zorder=5)
     gpd.GeoSeries([union], crs=ALBERS).boundary.plot(
@@ -86,6 +120,13 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     view = riv.cx[x0:x1, y0:y1]
+    # 旧实现只按视图矩形取要素，邻省/境外的河段会一直画到图幅边缘
+    # （宁夏图上黄河就往西南伸出省界一大截）。这里再按政区范围裁一次。
+    if len(view):
+        try:
+            view = gpd.clip(view, gpd.GeoSeries([union], crs=ALBERS))
+        except Exception:
+            pass
     if len(view):
         view.plot(ax=ax, color="#3d6fa8", lw=1.0, zorder=6)
 
@@ -93,7 +134,7 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     n0 = 0
     if inset_names:
         core = prov[prov["name"].isin(inset_names)]
-        core_union = core.union_all()
+        core_union = safe_union(core)
         cb = raw[raw["name"].isin(inset_names)].total_bounds  # EPSG:4326
         padx = (cb[2] - cb[0]) * 0.12 + 0.01
         pady = (cb[3] - cb[1]) * 0.12 + 0.008
@@ -193,8 +234,9 @@ def fig_pop(fig_no, adcode, pop7, fname, suptitle, footer, panel_titles=None,
         bars = ax.barh(dd["name"], dd[col], color="#5d8aa8",
                        edgecolor="white", lw=0.4, height=0.62, zorder=3)
         for b, v in zip(bars, dd[col]):
+            label = f"{v:.2f}" if 0 < v < 1 else fmt.format(v)
             ax.text(b.get_width() + dd[col].max() * 0.015,
-                    b.get_y() + b.get_height() / 2, fmt.format(v),
+                    b.get_y() + b.get_height() / 2, label,
                     va="center", ha="left", fontsize=8.2, color=C_TEXT,
                     zorder=4)
         ax.set_xlim(0, dd[col].max() * 1.14)
@@ -217,5 +259,5 @@ def fig_pop(fig_no, adcode, pop7, fname, suptitle, footer, panel_titles=None,
              fontsize=9.0, color="#666666")
     fig.text(0.02, 0.02, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.92))
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)

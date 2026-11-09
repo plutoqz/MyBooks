@@ -5,6 +5,7 @@ fig2-7 省级行政区数量变化（1949—2025）
 fig2-8 地区与地级市的此消彼长
 fig2-9 重大建制变更时间轴（1947—2025）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -32,11 +33,11 @@ def fig2_7_province_count():
     ax.step(xs, ys, where="post", color=C_CHINA, lw=2.2, zorder=3)
     ax.plot(xs, ys, "o", color=C_CHINA, ms=6, mec="white", mew=1.0, zorder=4)
     for x, y in pts:
-        ax.annotate(f"{y}", xy=(x, y), xytext=(0, 9), textcoords="offset points",
-                    ha="center", fontsize=9.5, color=C_TEXT, zorder=5)
+        ax.annotate(f"{y}", xy=(x, y), xytext=(8, 8), textcoords="offset points",
+                    ha="left", fontsize=9.5, color=C_TEXT, zorder=5)
 
     notes = [
-        (1949, 50, "新中国成立：50 个省级单位\n（30 省、12 直辖市、5 行署区等）", (1951.5, 46.5)),
+        (1949, 50, "新中国成立：50 个省级单位\n（30 省、12 直辖市、5 行署区等）", (1960, 46.5)),
         (1954, 31, "1954 年撤销六大行政区\n并省精简", (1956.5, 37.5)),
         (1958, 29, "桂、宁自治区成立\n天津暂并入河北", (1960.5, 24.5)),
         (1967, 30, "天津恢复直辖市", (1969.5, 33.5)),
@@ -45,10 +46,8 @@ def fig2_7_province_count():
         (1999, 34, "澳门回归", (2001.5, 30.5)),
     ]
     for x, y, text, (tx, ty) in notes:
-        ax.annotate(text, xy=(x, y), xytext=(tx, ty), fontsize=9, color="#444444",
-                    ha="center", va="center", zorder=5,
-                    arrowprops=dict(arrowstyle="-", color="#999999", lw=0.7,
-                                    shrinkA=2, shrinkB=4))
+        ax.text(tx, ty, f"{x} 年\n{text}", fontsize=8.5, color="#444444",
+                ha="center", va="center", zorder=5)
 
     ax.set_xlim(1946, 2028)
     ax.set_ylim(20, 56)
@@ -70,7 +69,7 @@ def fig2_7_province_count():
              "数据来源：据百度百科《中华人民共和国行政区划》、中共党史网等公开资料整理；1954 年含昌都地区。",
              fontsize=8.2, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.9))
-    fig.savefig(os.path.join(OUT, "fig2-7_省级行政区数量变化.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-7_省级行政区数量变化.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -115,7 +114,7 @@ def fig2_8_prefecture():
              "1983 年地区行署为 138 个（周天勇，人民网）。",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.885))
-    fig.savefig(os.path.join(OUT, "fig2-8_地区与地级市此消彼长.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-8_地区与地级市此消彼长.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -169,7 +168,7 @@ def fig2_9_timeline():
              "据中共党史网、民政部及各地政府公开资料整理。",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.88))
-    fig.savefig(os.path.join(OUT, "fig2-9_建制变更时间轴.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-9_建制变更时间轴.png"), dpi=DPI)
     plt.close(fig)
 
 

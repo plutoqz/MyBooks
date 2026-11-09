@@ -7,6 +7,7 @@ fig8-2 海洋生产总值历年变化    fig9-2 历次普查年龄结构
                                fig9-4 七普民族人口
                                fig9-5 城镇化率（1949—2025）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -18,7 +19,8 @@ from matplotlib.ticker import FuncFormatter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_CHINA_FILL, C_SEA, C_TEXT, DATA, DPI, FIGURES,
-                   add_title, new_map_axes, save_fig, set_extent_from, setup)
+                   add_title, draw_borders, new_map_axes, save_fig,
+                   set_extent_from, setup)
 from ch03_terrain import RES_A, hillshade, load_cache, to_albers
 
 OUT = FIGURES
@@ -60,11 +62,7 @@ def fig8_1_islands():
     fig, ax = new_map_axes((10.5, 10.8))
     _map_base(ax)
     gdf, prov, dash = _full_gdf()
-    prov.boundary.plot(ax=ax, color="#5a5a5a", linewidth=0.28, alpha=0.5,
-                       zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
     items = [
         ("长山群岛", 122.6, 39.2, 0, 0.5), ("庙岛群岛", 120.7, 38.0, 0.9, 0.2),
         ("崇明岛", 121.6, 31.7, -1.6, 0.5), ("舟山群岛", 122.2, 30.1, 1.2, 0.1),
@@ -96,8 +94,6 @@ def fig8_2_oceangdp():
         ax.text(b.get_x() + b.get_width() / 2, v + 0.12, f"{v:.2f}",
                 ha="center", fontsize=9.4, color=C_TEXT, zorder=4)
     ax.axhline(10, color="#c0392b", lw=1.1, ls="--")
-    ax.text(5.42, 10.12, "突破 10 万亿", fontsize=8.6, color="#c0392b",
-            ha="right")
     ax.set_ylim(0, 12.2)
     ax.grid(axis="y", color="#dde3e8", lw=0.7, zorder=0)
     ax.set_axisbelow(True)
@@ -112,10 +108,10 @@ def fig8_2_oceangdp():
     fig.text(0.02, 0.952, "2024 年突破 10 万亿元，约占 GDP 的 7.8%", fontsize=9.3,
              color="#666666", va="top")
     fig.text(0.02, 0.012,
-             "数据来源：自然资源部《中国海洋经济统计公报》（2020—2025 年发布）",
+             "红色虚线：10 万亿元。来源：自然资源部《中国海洋经济统计公报》（2020—2025 年发布）。",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig8-2_海洋生产总值.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig8-2_海洋生产总值.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -154,13 +150,13 @@ def fig9_1_population():
              "数据来源：国家统计局历年国民经济和社会发展统计公报（逢 0/5 年为普查修正值口径）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig9-1_人口总量变化.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig9-1_人口总量变化.png"), dpi=DPI)
     plt.close(fig)
 
 
 # ---------------------------------------------------------------- fig 9-2
 def fig9_2_age():
-    censuses = ["1982 二普后", "1990 四普", "2000 五普", "2010 六普", "2020 七普"]
+    censuses = ["1982 三普", "1990 四普", "2000 五普", "2010 六普", "2020 七普"]
     young = [33.59, 27.69, 22.89, 16.60, 17.95]
     work = [61.50, 66.74, 70.15, 74.53, 68.55]
     old = [4.91, 5.57, 6.96, 8.87, 13.50]
@@ -184,8 +180,8 @@ def fig9_2_age():
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color("#999999")
     ax.spines["left"].set_color("#999999")
-    ax.legend(loc="upper right", fontsize=8.8, framealpha=0.92,
-              edgecolor="#cccccc", ncol=3)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16),
+              fontsize=8.8, frameon=False, ncol=3)
     fig.text(0.02, 0.982, "历次人口普查的年龄结构", fontsize=14.5,
              fontweight="bold", color=C_TEXT, va="top")
     fig.text(0.02, 0.952, "少子化与老龄化同步加深：七普 65 岁及以上人口占 13.5%",
@@ -193,7 +189,7 @@ def fig9_2_age():
     fig.text(0.02, 0.012, "数据来源：国家统计局历次全国人口普查公报", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig9-2_年龄结构演变.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig9-2_年龄结构演变.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -202,11 +198,8 @@ def fig9_3_hu():
     fig, ax = new_map_axes((10.5, 10.8))
     _map_base(ax)
     gdf, prov, dash = _full_gdf()
-    prov.plot(ax=ax, color=C_CHINA_FILL, edgecolor="#7f7f7f", linewidth=0.4,
-              zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#4a6274", linewidth=0.7,
-                  ls="--", zorder=4)
+    prov.plot(ax=ax, color=C_CHINA_FILL, edgecolor="none", zorder=3)
+    draw_borders(ax, prov, dash, z=3)
     xs, ys = zip(*[to_albers(127.53, 50.24), to_albers(110.0, 41.2),
                    to_albers(104.0, 34.5), to_albers(98.50, 25.02)])
     ax.plot(xs, ys, color="#1a1a1a", lw=2.4, ls=(0, (7, 4)), zorder=6)
@@ -234,7 +227,7 @@ def fig9_3_hu():
         ax.text(x, y, t, fontsize=9.2, color="#1a1a1a", ha="center", zorder=9)
     set_extent_from(ax, prov)
     add_title(ax, "胡焕庸线与人口分布",
-              "1935 年地理学家胡焕庸划出的这条线，87 年后依然有效")
+              "黑河—腾冲一线反映中国人口分布的基本空间格局")
     save_fig(fig, ax, "fig9-3_胡焕庸线.png",
              footer="底图：DataV.GeoAtlas 与 AWS Terrain Tiles；比例按近年人口数据更新\n"
                     "示意地图，不作为权属划界依据")
@@ -287,7 +280,7 @@ def fig9_4_ethnic():
     fig.text(0.02, 0.012, "数据来源：国家统计局《第七次全国人口普查公报》（2021 年 5 月）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig9-4_民族构成.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig9-4_民族构成.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -324,7 +317,7 @@ def fig9_5_urban():
              "数据来源：国家统计局历年统计公报与人口普查（逢普查年取普查口径）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig9-5_城镇化率.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig9-5_城镇化率.png"), dpi=DPI)
     plt.close(fig)
 
 

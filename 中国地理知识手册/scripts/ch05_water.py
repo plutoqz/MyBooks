@@ -7,12 +7,14 @@ fig5-3 长江流域水系图        fig5-7 南水北调三线示意
 fig5-4 黄河流域水系图
 底图：AWS Terrain 山体阴影（复用缓存）；河流：Natural Earth 50m。
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Polygon as MplPolygon
 from shapely.geometry import Polygon as ShPolygon
@@ -42,23 +44,87 @@ def _dem_base(ax):
 
 
 def _borders(ax, z=3):
-    gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
-                                     "100000_full.json"))
-    prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
-    dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.28, alpha=0.55, zorder=z)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=z + 1)
-    return gdf, prov, dash
+    """统一地图骨架：国界线（深）+ 省界（浅）+ 南海断续线（实线）。
+
+    旧实现只画 prov.boundary（省界），既没有国界图层，又把断续线当 Polygon 用
+    ls="--" 描边，导致断续线碎成十余段小弧。改由 style.plot_china_frame 统一处理。
+    """
+    from style import load_china, plot_china_frame
+    china = load_china().to_crs(ALBERS)
+    prov, dash = plot_china_frame(ax, china, z=z)
+    return china, prov, dash
+
+
+def _china_outline(prov):
+    """省级政区并集（用于把河流/湖泊裁切在国界之内）。
+
+    旧实现直接 dissolve().union_all()，遇 DataV 的拓扑无效省份会抛
+    GEOSException: side location conflict。统一走 style.china_outline
+    （逐要素 make_valid 后再求并集，并带结果缓存）。
+    """
+    from style import china_outline
+    return china_outline(prov)
+
+
+def _basin_geom(basin_g):
+    """流域示意多边形的合法化并集。
+
+    手工勾绘的流域边界顶点序有自交，直接 union_all 会抛 TopologyException。
+    """
+    from shapely import make_valid
+    from shapely.ops import unary_union
+    geoms = []
+    for g in basin_g.geometry:
+        if g is None or g.is_empty:
+            continue
+        geoms.append(make_valid(g) if not g.is_valid else g)
+    if not geoms:
+        return None
+    try:
+        return unary_union(geoms)
+    except Exception:
+        return unary_union([g.buffer(0) for g in geoms])
+
+
+def _merge_rivers(gdf):
+    """按河流名称接续碎段，消除 Natural Earth 分段造成的干流断口。"""
+    from shapely.ops import linemerge
+    if gdf is None or len(gdf) == 0:
+        return gdf
+    ncol = "name" if "name" in gdf.columns else None
+    if ncol is None:
+        return gdf
+    has_name = gdf[ncol].notna() & (gdf[ncol].astype(str).str.strip() != "")
+    named, unnamed = gdf[has_name].copy(), gdf[~has_name].copy()
+
+    if len(named):
+        def _m(gs):
+            segs = [g for g in gs if g is not None and not g.is_empty]
+            if not segs:
+                return None
+            try:
+                return linemerge(segs) if len(segs) > 1 else segs[0]
+            except Exception:
+                return segs[0]
+        # 旧实现 groupby 只保留 name + geometry，把 scalerank 整列丢掉了，
+        # 下游 riv["scalerank"] 直接 KeyError。这里把等级一并带出（取组内最好等级）。
+        agg = {ncol: "first"}
+        for c in ("scalerank", "featurecla", "min_zoom"):
+            if c in named.columns:
+                agg[c] = "min" if c != "featurecla" else "first"
+        tmp = named.groupby(ncol, as_index=False).agg(agg)
+        geoms = named.groupby(ncol)["geometry"].apply(_m).values
+        tmp["geometry"] = geoms
+        named = gpd.GeoDataFrame(tmp, geometry="geometry", crs=gdf.crs)
+
+    out = pd.concat([named, unnamed], ignore_index=True) if len(unnamed) else named
+    return gpd.GeoDataFrame(out, geometry="geometry", crs=gdf.crs)
 
 
 def _load_rivers():
-    riv = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                     "ne_50m_rivers_lake_centerlines",
-                                     "ne_50m_rivers_lake_centerlines.shp"))
-    lak = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                     "ne_50m_lakes", "ne_50m_lakes.shp"))
+    from style import load_ne_layer
+    riv = load_ne_layer("ne_50m_rivers_lake_centerlines")
+    lak = load_ne_layer("ne_50m_lakes")
     return riv.to_crs(ALBERS), lak.to_crs(ALBERS)
 
 
@@ -81,30 +147,58 @@ def fig5_1_rivers():
     fig, ax = new_map_axes((10.5, 10.8))
     ax.set_facecolor(C_SEA)
     _dem_base(ax)
-    gdf, prov, dash = _borders(ax)
+    china, prov, dash = _borders(ax, z=4)
     riv, lak = _load_rivers()
-    bbox = prov.total_bounds
-    view = riv.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]]
-    view.plot(ax=ax, color=WATER, linewidth=view["scalerank"].map(
-        lambda s: 0.9 if s <= 6 else 0.55), zorder=6)
-    lv = lak.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]]
-    lv.plot(ax=ax, color=LAKE, alpha=0.85, zorder=6)
+
+    # 关键修正：用国界多边形裁切，而非矩形 bbox
+    # 旧实现 riv.cx[bbox] 用中国外接矩形取要素，把东南亚、印度、俄罗斯境内
+    # 的河网一并画进图里；裁切后只保留境内河段。
+    outline = _china_outline(prov)
+    riv = _merge_rivers(gpd.clip(riv, outline))
+    lak = gpd.clip(lak, outline)
+
+    if "scalerank" not in riv.columns:
+        riv = riv.copy()
+        riv["scalerank"] = 1
+    main = riv[riv["scalerank"] <= 6]
+    minor = riv[riv["scalerank"] > 6]
+    if len(minor):
+        minor.plot(ax=ax, color="#6aa6d0", linewidth=0.55, zorder=6)
+    if len(main):
+        main.plot(ax=ax, color="#1a5276", linewidth=1.25, zorder=7)
+    if len(lak):
+        lak.plot(ax=ax, color=LAKE, alpha=0.9, zorder=7)
 
     labels = [
-        ("长江", 116.0, 30.6, -8), ("黄河", 110.5, 36.3, -12),
+        ("长江", 113.6, 30.4, -8), ("黄河", 110.5, 36.3, -12),
         ("黑龙江", 126.5, 50.3, -18), ("松花江", 128.5, 45.0, -12),
         ("珠江", 112.8, 23.1, -5), ("塔里木河", 84.0, 41.0, -3),
         ("雅鲁藏布江", 92.5, 29.4, 8), ("澜沧江", 100.0, 27.5, -70),
-        ("怒江", 98.6, 27.0, -70), ("淮河", 117.5, 32.6, -5),
+        ("怒江", 96.6, 26.2, -72), ("淮河", 117.5, 32.6, -5),
         ("海河", 116.8, 38.8, 0), ("辽河", 122.5, 42.3, -30),
-        ("京杭运河", 116.5, 34.5, -88),
+        ("京杭运河", 117.2, 34.9, -88),
     ]
     for t, lo, la, rot in labels:
         _river_label(ax, lo, la, t, rot=rot)
-    for t, lo, la in [("青海湖", 100.1, 36.9), ("鄱阳湖", 116.3, 29.2),
-                      ("洞庭湖", 112.6, 29.2), ("太湖", 120.2, 31.3)]:
+    # 长江口—鄱阳湖—太湖三者原坐标仅相差 1°，注记叠成一团，逐个拉开
+    for t, lo, la in [("青海湖", 100.1, 36.9), ("鄱阳湖", 116.9, 28.2),
+                      ("洞庭湖", 112.2, 29.6), ("太湖", 120.9, 30.7),
+                      ("呼伦湖", 117.4, 48.9)]:
         _river_label(ax, lo, la, t, fs=7.6)
     set_extent_from(ax, prov)
+
+    handles = [
+        Line2D([0], [0], color="#1a5276", lw=1.3, label="主要河流干流"),
+        Line2D([0], [0], color="#6aa6d0", lw=0.7, label="支流与次级河流"),
+        Line2D([0], [0], marker="s", color="w", markerfacecolor=LAKE, markersize=6,
+               label="湖泊 / 水库水面"),
+        Line2D([0], [0], color="#39454f", lw=1.05, label="国界线"),
+        Line2D([0], [0], color="#9aa5ad", lw=0.5, label="省级行政区界线"),
+        Line2D([0], [0], color="#1b2631", lw=1.0, label="南海断续线"),
+    ]
+    ax.legend(handles=handles, loc="lower left", fontsize=8.0, framealpha=0.92,
+              title="图例", title_fontsize=8.6)
+
     add_title(ax, "全国主要水系", "外流河与内流河并存；多数河流自西向东注入太平洋")
     save_fig(fig, ax, "fig5-1_全国主要水系图.png",
              footer="河流线划：Natural Earth 50m（公共领域），线宽按等级示意；底图：AWS Terrain Tiles\n"
@@ -147,7 +241,7 @@ def fig5_2_compare():
     fig.text(0.02, 0.012, "数据来源：水利部及通行教材口径（约数）", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(FIGURES, "fig5-2_主要河流长度对比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig5-2_主要河流长度对比.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -163,12 +257,13 @@ def basin_map(fname, title, subtitle, basin_poly, stem_names, marks, divs,
     basin_g = gpd.GeoSeries([poly], crs="EPSG:4326").to_crs(ALBERS)
     basin_g.plot(ax=ax, facecolor="#2471a3", alpha=0.10, edgecolor="#2471a3",
                  lw=1.4, zorder=4)
-    sub = riv[riv.intersects(basin_g.union_all())]
+    basin_geom = _basin_geom(basin_g)
+    sub = riv[riv.intersects(basin_geom)]
     stem = sub[sub["name"].isin(stem_names) if stem_names else False]
     rest = sub[~sub.index.isin(stem.index)]
     rest.plot(ax=ax, color=WATER_LT, linewidth=0.5, zorder=5)
     stem.plot(ax=ax, color="#1b4f72", linewidth=1.7, zorder=6)
-    lk = lak[lak.intersects(basin_g.union_all())]
+    lk = lak[lak.intersects(basin_geom)]
     lk.plot(ax=ax, color=LAKE, alpha=0.85, zorder=5)
     for t, lo, la, rot in trib_labels:
         _river_label(ax, lo, la, t, rot=rot, fs=8.0)
@@ -272,7 +367,7 @@ def fig5_5_profiles():
              "示意剖面：按代表性水文/城市站点高程与里程勾绘，不按等比绘图",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.savefig(os.path.join(FIGURES, "fig5-5_长江黄河纵剖面.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig5-5_长江黄河纵剖面.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -310,7 +405,7 @@ def fig5_6_lakes():
     fig.text(0.02, 0.012, "数据来源：水利部、中国科学院南京地理与湖泊研究所公开数据（约数）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(FIGURES, "fig5-6_主要湖泊面积对比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig5-6_主要湖泊面积对比.png"), dpi=DPI)
     plt.close(fig)
 
 

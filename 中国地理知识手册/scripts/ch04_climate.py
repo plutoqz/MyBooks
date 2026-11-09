@@ -10,9 +10,11 @@ fig4-4 7月平均气温等值线   fig4-5 温度带划分（示意）
 fig4-6 年降水量等值线      fig4-1 六城气候图（climograph）
                            fig4-8 影响中国的台风路径（IBTrACS）
 """
+from volume1_layout import save_volume_figure
 import json
 import os
 import sys
+import time
 from urllib.request import urlopen
 
 import geopandas as gpd
@@ -22,7 +24,8 @@ from pyproj import Transformer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes, save_fig, set_extent_from, setup)
+                   draw_borders, new_map_axes, save_fig, set_extent_from,
+                   setup)
 from geo_features import CITIES, PLATEAUS
 from ch03_terrain import RES_A, hillshade, load_cache
 
@@ -85,10 +88,7 @@ def _borders(ax, z=3):
                                      "100000_full.json"))
     prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
     dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.28, alpha=0.55, zorder=z)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=z + 1)
+    draw_borders(ax, prov, dash, z=z)
     return gdf, prov, dash
 
 
@@ -200,14 +200,39 @@ def fig4_5_belts():
             "fig4-5_温度带划分.png", FOOT_BETA)
 
 
-def city_series(city):
+def city_series(city, tries=3):
+    """城市 2004—2023 年逐日气温/降水 → 月均与年降水量。
+
+    旧实现单次联网、无缓存：open-meteo 一旦超时或断连，整章气候图全部出不来。
+    这里加磁盘缓存（data/climatology/openmeteo/*.json）+ 重试。
+    """
     lo, la = CITIES[city]
-    url = ("https://archive-api.open-meteo.com/v1/archive"
-           f"?latitude={la}&longitude={lo}"
-           "&start_date=2004-01-01&end_date=2023-12-31"
-           "&daily=temperature_2m_mean,precipitation_sum&timezone=auto")
-    with urlopen(url, timeout=120) as r:
-        data = json.loads(r.read())
+    cache_dir = os.path.join(DATA, "climatology", "openmeteo")
+    os.makedirs(cache_dir, exist_ok=True)
+    fp = os.path.join(cache_dir, f"{city}.json")
+    data = None
+    if os.path.exists(fp) and os.path.getsize(fp) > 1000:
+        with open(fp, encoding="utf-8") as f:
+            data = json.load(f)
+    if data is None:
+        url = ("https://archive-api.open-meteo.com/v1/archive"
+               f"?latitude={la}&longitude={lo}"
+               "&start_date=2004-01-01&end_date=2023-12-31"
+               "&daily=temperature_2m_mean,precipitation_sum&timezone=auto")
+        for k in range(tries):
+            try:
+                with urlopen(url, timeout=120) as r:
+                    data = json.loads(r.read())
+                with open(fp, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                break
+            except Exception as e:
+                print(f"  {city} 气候数据下载失败({k + 1}/{tries})："
+                      f"{type(e).__name__}")
+                data = None
+                time.sleep(2)
+        if data is None:
+            raise RuntimeError(f"{city} 气候数据不可用")
     daily = data["daily"]
     temps = [[] for _ in range(12)]
     precs = [[] for _ in range(12)]
@@ -230,7 +255,12 @@ def fig4_6_climographs():
     fig, axes = plt.subplots(2, 3, figsize=(11.4, 6.8))
     months = np.arange(1, 13)
     for ax, city, cap in zip(axes.flat, cities, captions):
-        t, p = city_series(city)
+        try:
+            t, p = city_series(city)
+        except Exception as e:
+            print("跳过", city, "：", e)
+            ax.set_axis_off()
+            continue
         ax.bar(months, p, color="#7fb3d5", width=0.62, zorder=2)
         ax.set_ylim(0, max(320, np.nanmax(p) * 1.12))
         ax2 = ax.twinx()
@@ -257,27 +287,58 @@ def fig4_6_climographs():
              "数据：Open-Meteo Archive（基于 ERA5 再分析），城市坐标取市驻地", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.90))
-    fig.savefig(os.path.join(FIGURES, "fig4-1_六城气候图.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig4-1_六城气候图.png"), dpi=DPI)
     plt.close(fig)
 
 
-def fetch_ibtracs():
+def _csv_complete(fp):
+    """判断 IBTrACS CSV 是否完整：末行字段数须与表头一致。
+
+    旧实现只比字节数（min_bytes=1 MB），而完整文件有 109 MB。一次中途掐断
+    留下 51 MB 半截文件也会被当成"可用"，随后 pandas 解析报错、整图失败。
+    """
+    try:
+        with open(fp, "rb") as f:
+            head = f.readline().decode("utf-8", "replace").strip()
+        with open(fp, "rb") as f:
+            f.seek(max(0, os.path.getsize(fp) - 4096))
+            tail = f.read().decode("utf-8", "replace").splitlines()
+        tail = [t for t in tail if t.strip()]
+        if not head or not tail:
+            return False
+        return tail[-1].count(",") >= head.count(",") * 0.9
+    except Exception:
+        return False
+
+
+def fetch_ibtracs(tries=3, min_bytes=1_000_000):
+    """下载 IBTrACS 西北太平洋最佳路径数据（不可用时返回 False，不抛异常）。
+
+    NCEI 这个文件有 109 MB，单连接必被中途掐断（SSL UNEXPECTED_EOF /
+    RemoteDisconnected）。改为复用 scripts/fetch_ibtracs.py 的 2 MB 分块
+    Range 续传，断点从已有文件大小继续。
+    """
     os.makedirs(IBTRACS, exist_ok=True)
     fp = os.path.join(IBTRACS, "ibtracs.WP.list.v04r01.csv")
-    if os.path.exists(fp):
-        return
-    url = ("https://www.ncei.noaa.gov/data/international-best-track-"
-           "archive-for-climate-stewardship-ibtracs/v04r01/access/csv/"
-           "ibtracs.WP.list.v04r01.csv")
-    print("downloading IBTrACS WP ...")
-    with urlopen(url, timeout=300) as r:
-        open(fp, "wb").write(r.read())
-    print("done", os.path.getsize(fp))
+    if os.path.exists(fp) and _csv_complete(fp):
+        return True
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import fetch_ibtracs as fi
+        rc = fi.download(fp)
+        if rc == 0 and _csv_complete(fp):
+            print("IBTrACS 下载完成", os.path.getsize(fp))
+            return True
+    except Exception as e:
+        print(f"  IBTrACS 分块下载失败：{type(e).__name__}: {str(e)[:80]}")
+    return False
 
 
 def fig4_7_typhoon():
     import pandas as pd
-    fetch_ibtracs()
+    if not fetch_ibtracs():
+        print("跳过 fig4-7：IBTrACS 数据不可用（无网络的离线环境属正常）")
+        return False
     fp = os.path.join(IBTRACS, "ibtracs.WP.list.v04r01.csv")
     df = pd.read_csv(fp, low_memory=False, skiprows=[1],
                      usecols=["SID", "SEASON", "BASIN", "LAT", "LON"])
@@ -287,9 +348,14 @@ def fig4_7_typhoon():
     df = df.dropna(subset=["LAT", "LON"])
     df = df[(df.LAT > 2) & (df.LAT < 48) & (df.LON > 100) & (df.LON < 145)]
 
-    gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav", "100000.json"))
+    # 旧实现读 100000.json —— 这个文件根本不存在（DataV 落盘的是
+    # 100000_full.json），fig4-7 必定 FileNotFoundError。
+    from style import safe_union
+    gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
+                                     "100000_full.json"))
     land = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
-    coast = land.boundary.union_all()
+    co = safe_union(land)
+    coast = co.boundary if co is not None else land.boundary.union_all()
     pts = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.LON, df.LAT),
                            crs="EPSG:4326").to_crs(ALBERS)
     near = gpd.sjoin_nearest(pts, gpd.GeoDataFrame(geometry=[coast], crs=ALBERS),
@@ -307,19 +373,16 @@ def fig4_7_typhoon():
     rgba[:, :, 3] = np.where(np.isnan(dem), 0.0, 1.0)
     ax.imshow(rgba, extent=(minx, minx + w * RES_A, maxy - h * RES_A, maxy),
               origin="upper", interpolation="bilinear", zorder=1)
-    land.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.3, zorder=3)
     dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, land, dash, z=3)
     df2 = pts[pts["SID"].isin(storm_ids)]
     for sid, g in df2.groupby("SID"):
         ax.plot(g.geometry.x, g.geometry.y, color="#c0392b", lw=0.25,
                 alpha=0.35, zorder=5, solid_capstyle="round")
     ax.plot([], [], color="#c0392b", lw=1.2, alpha=0.6,
-            label=f"1949—2024 年距中国海岸线 150 km 以内的热带气旋路径（{len(storm_ids)} 个）")
-    ax.legend(loc="lower left", bbox_to_anchor=(0.01, 0.10), fontsize=9,
-              framealpha=0.9, edgecolor="#cccccc")
+            label=f"距海岸线 150 km 以内的路径（{len(storm_ids)} 个热带气旋）")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.025), fontsize=9,
+              frameon=False)
     set_extent_from(ax, land, pad_frac=0.03)
     add_title(ax, "影响中国的热带气旋路径（1949—2024）",
               "路径距中国海岸线 150 km 以内；西北太平洋是全球热带气旋最活跃的海区")

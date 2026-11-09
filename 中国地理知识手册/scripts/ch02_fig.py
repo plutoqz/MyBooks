@@ -4,6 +4,7 @@
 fig2-1 行政区划层级结构示意图（自绘）
 fig2-2 各级政区数量与县级构成（民政部公报数据）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -99,7 +100,7 @@ def fig2_1_hierarchy():
              "地级行政区划中的地区行政公署、乡级行政区划中的街道办事处分别为上级政府的派出机关。",
              ha="center", va="bottom", fontsize=8.2, color="#555555")
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.savefig(os.path.join(OUT, "fig2-1_行政区划层级结构.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-1_行政区划层级结构.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -111,9 +112,9 @@ def fig2_2_counts():
     lv = ["乡级", "县级", "地级", "省级"]
     vals = [38712, 2846, 333, 34]
     colors = ["#a9b8c4", "#a9b8c4", "#a9b8c4", C_TEXT]
-    bars = ax1.barh(lv, vals, color=colors, height=0.58, zorder=3)
-    for b, v in zip(bars, vals):
-        ax1.text(v * 1.12, b.get_y() + b.get_height() / 2, f"{v:,}".replace(",", " "),
+    ax1.scatter(vals, lv, color=colors, s=55, zorder=3)
+    for y, v in enumerate(vals):
+        ax1.text(v * 1.12, y, f"{v:,}".replace(",", " "),
                  va="center", ha="left", fontsize=10, color=C_TEXT, zorder=4)
     ax1.set_xscale("log")
     ax1.set_xlim(10, 300000)
@@ -151,7 +152,7 @@ def fig2_2_counts():
              "数据来源：民政部《2024年民政事业发展统计公报》《2023年民政事业发展统计公报》。",
              fontsize=8.2, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 1))
-    fig.savefig(os.path.join(OUT, "fig2-2_政区数量与县级构成.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-2_政区数量与县级构成.png"), dpi=DPI)
     plt.close(fig)
 
 

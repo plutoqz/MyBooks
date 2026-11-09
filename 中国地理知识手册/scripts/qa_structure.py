@@ -16,12 +16,11 @@ EXPECT = ([f"01-0{i}" for i in range(1, 4)] + [f"02-0{i}" for i in range(1, 5)]
           + [f"03-0{i}" for i in range(1, 6)] + [f"04-0{i}" for i in range(1, 6)]
           + [f"05-0{i}" for i in range(1, 6)] + [f"06-0{i}" for i in range(1, 5)]
           + [f"07-0{i}" for i in range(1, 4)] + [f"08-0{i}" for i in range(1, 4)]
-          + [f"09-0{i}" for i in range(1, 5)] + [f"10-0{i}" for i in range(1, 4)]
-          + [f"11-0{i}" for i in range(1, 5)] + [f"12-0{i}" for i in range(1, 4)]
-          + [f"13-0{i}" for i in range(1, 5)]
-          + [f"13-05-{i:02d}" for i in range(1, 35)] + ["99"])
+          + [f"09-0{i}" for i in range(1, 6)] + [f"10-0{i}" for i in range(1, 5)]
+          + [f"11-0{i}" for i in range(1, 6)] + [f"12-0{i}" for i in range(1, 5)]
+          + [f"13-0{i}" for i in range(1, 6)] + [f"14-{i:02d}" for i in range(1, 35)] + ["99"])
 
-PROV_H2 = [("省情速览",), ("自然地理",), ("建置沿革",),
+PROV_H2 = [("省情速览", "区情速览"), ("自然地理",), ("建置沿革",),
            ("经济",), ("分区地理",), ("之最",)]
 
 issues = []
@@ -38,7 +37,7 @@ stems = {f[:-3] for f in mds}
 for e in EXPECT:
     if not any(s == e or s.startswith(e + "_") for s in stems):
         add("缺节", "-", 0, f"提纲中的小节 {e} 没有对应文件")
-extra = [s for s in stems if not s.startswith("13-05_")
+extra = [s for s in stems if not s.startswith("14-00")
          and not any(s == e or s.startswith(e + "_") for e in EXPECT)]
 for s in extra:
     add("多节", s, 0, "不在提纲编号内的文件")
@@ -61,8 +60,10 @@ for f in mds:
         add("标题", f, 1, f"首行不是 '# X.Y 标题' 形式：{lines[0][:40]!r}")
     else:
         num = m.group(1)
-        if f.startswith("13-05-"):
-            want = "13.5." + str(int(f[6:8]))
+        if f.startswith("14-00"):
+            want = None
+        elif f.startswith("14-"):
+            want = "14." + str(int(f[3:5]))
         elif f.startswith("99"):
             want = None
         else:
@@ -71,7 +72,7 @@ for f in mds:
             add("标题编号", f, 1, f"标题编号 {num} 与文件名应为的 {want} 不符")
 
     # ---------- 2. 分省六段式
-    if f.startswith("13-05-") and f != "13-05_推进登记.md":
+    if f.startswith("14-") and not f.startswith("14-00"):
         h2 = [x for x in lines if x.startswith("## ")]
         for keys in PROV_H2:
             if not any(any(k in h for k in keys) for h in h2):

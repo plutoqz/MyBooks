@@ -4,6 +4,7 @@
 fig13-147 香港特别行政区地势图（z11 DEM，约 75 m/px；18 区编号标记）
 fig13-148 香港与深圳的四项指标对照（面积、人口、GDP、集装箱吞吐量）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -66,7 +67,7 @@ def fig148_hk_sz():
              "数据：香港特区政府统计处、香港海运港口局；深圳市 2024 年国民经济和社会发展统计公报",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.90))
-    fig.savefig(os.path.join(FIGURES, "fig13-148_香港与深圳对比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-148_香港与深圳对比.png"), dpi=DPI)
     plt.close(fig)
 
 

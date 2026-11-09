@@ -21,7 +21,7 @@ from urllib.request import urlopen
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from style import ALBERS, DATA
+from style import ALBERS, DATA, safe_union
 from ch03_terrain import ELEV_BINS, ELEV_COLORS, _tile_xy
 from pyproj import Transformer
 from rasterio.transform import from_origin
@@ -34,6 +34,104 @@ DEM_PROV_DIR = os.path.join(DATA, "dem", "province")
 
 def to_albers(lon, lat):
     return _T.transform(lon, lat)
+
+
+_LAND_LAYERS = {}
+
+
+def land_layers():
+    """中国省级 + 全球国界（Albers），进程内缓存。
+
+    用于「图幅内哪些像素是陆地」。分省地势图的 DEM 栅格只覆盖政区的
+    经纬度外包矩形，在 Albers 下这个矩形是斜置四边形，其外包框的四角
+    必然落在栅格之外（值为 NaN）。若直接用 ~isnan(dem) 当陆地掩膜，
+    这些角上的陆地区域会漏成底色（海蓝），在内陆省份图上表现为显眼的
+    蓝色楔形块（青海左上角即如此）。
+    """
+    if "g" in _LAND_LAYERS:
+        return _LAND_LAYERS["g"]
+    import geopandas as gpd
+    geoms = []
+    cp = os.path.join(DATA, "boundaries", "datav", "100000_full.json")
+    if os.path.exists(cp):
+        cn = gpd.read_file(cp).to_crs(ALBERS)
+        # 100000_full.json 的最后一行是南海断续线的窄条面（name 为空）。
+        # 它是**线**不是陆地，若参与栅格化会在台湾以东、南海画出一条
+        # 细长"陆地"条带，被 _paper_overlay 涂成纸色（台湾图上那道竖线）。
+        if "name" in cn.columns:
+            keep = cn["name"].notna() & (cn["name"].astype(str).str.strip() != "")
+            cn = cn[keep]
+        geoms += list(cn.geometry)
+    base = os.path.join(DATA, "boundaries", "natural_earth")
+    for fp in (os.path.join(base, "ne_50m", "ne_50m_admin_0_countries.shp"),
+               os.path.join(base, "ne_50m_admin_0_countries.geojson"),
+               os.path.join(base, "ne_50m_admin_0_countries.shp")):
+        if os.path.exists(fp):
+            geoms += list(gpd.read_file(fp).to_crs(ALBERS).geometry)
+            break
+    _LAND_LAYERS["g"] = geoms
+    return geoms
+
+
+def china_solid():
+    """中国省级政区并集，并**填掉内部空洞**的一整块面（Albers）。
+
+    DataV 数据里内蒙古境内有一块归属不明的空洞（加格达奇—松岭一带，
+    黑龙江实际管辖、图上却既不算内蒙古也不算黑龙江），内蒙古图上
+    表现为一块纯白缺口。这里用「只取外环」的简化面兜住这类缝隙。
+    """
+    if "c" in _LAND_LAYERS:
+        return _LAND_LAYERS["c"]
+    import geopandas as gpd
+    from shapely.geometry import MultiPolygon, Polygon
+    cp = os.path.join(DATA, "boundaries", "datav", "100000_full.json")
+    if not os.path.exists(cp):
+        _LAND_LAYERS["c"] = None
+        return None
+    cn = gpd.read_file(cp).to_crs(ALBERS)
+    if "name" in cn.columns:
+        keep = cn["name"].notna() & (cn["name"].astype(str).str.strip() != "")
+        cn = cn[keep]
+    u = safe_union(cn)
+    if u is None:
+        _LAND_LAYERS["c"] = None
+        return None
+    if u.geom_type == "Polygon":
+        u = Polygon(u.exterior)
+    elif u.geom_type == "MultiPolygon":
+        u = MultiPolygon([Polygon(p.exterior) for p in u.geoms])
+    _LAND_LAYERS["c"] = u
+    return u
+
+
+def raster_land(h, w, tf, union):
+    """在图幅网格上栅格化「陆地」掩膜（政区 + 中国 + 邻国）。"""
+    from rasterio.features import rasterize
+    geoms = [union, china_solid()] + land_layers()
+    try:
+        m = rasterize([(g, 1) for g in geoms if g is not None and not g.is_empty],
+                      out_shape=(h, w), transform=tf, fill=0, dtype="uint8")
+        return m.astype(bool)
+    except Exception:
+        return None
+
+
+def raster_china(h, w, tf):
+    """中国境内掩膜（用于区分「邻省」与「境外陆地」）。
+
+    省级图幅是矩形的，四角往往落在邻国境内；若把整块陆地都涂成纸色，
+    图上就会出现一个与页面不同色的米白矩形（新疆图最明显）。
+    """
+    from rasterio.features import rasterize
+    c = china_solid()
+    if c is None or c.is_empty:
+        return None
+    try:
+        m = rasterize([(c, 1)], out_shape=(h, w), transform=tf,
+                      fill=0, dtype="uint8")
+        return m.astype(bool)
+    except Exception:
+        return None
 
 
 def prov_path(adcode):
@@ -86,7 +184,7 @@ def prov_dem(adcode, zoom=9, res=300.0, pad_frac=0.06):
                 continue
         return None
 
-    paths = {}
+    paths, missing = {}, []
     with ThreadPoolExecutor(max_workers=16) as ex:
         futs = {(tx, ty): ex.submit(fetch, tx, ty)
                 for ty in range(y0, y1 + 1) for tx in range(x0, x1 + 1)}
@@ -94,6 +192,14 @@ def prov_dem(adcode, zoom=9, res=300.0, pad_frac=0.06):
             p = fu.result()
             if p:
                 paths[k] = p
+            else:
+                # 旧实现静默跳过失败的瓦片，mosaic 该处保留 np.zeros 初值，
+                # 结果在成图上表现为"海拔 0 m"的绿色矩形块（宁夏中部即如此）。
+                missing.append(k)
+    if missing:
+        raise RuntimeError(
+            f"{adcode} 有 {len(missing)} 个 DEM 瓦片下载失败（示例 {missing[:4]}），"
+            f"已中止缓存写入，请重试")
 
     from PIL import Image
     for (tx, ty), p in paths.items():
@@ -128,14 +234,16 @@ def prov_dem(adcode, zoom=9, res=300.0, pad_frac=0.06):
     # 陆地掩膜（政区 + 全国 + 邻国之外为 NaN，海面自然露出底色）
     _raw = raw.to_crs(ALBERS)
     _raw["geometry"] = _raw.geometry.buffer(0)  # 修复 DataV 界线的无效几何
-    prov_u = _raw.union_all()
-    china = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
-                                       "100000_full.json")).to_crs(ALBERS)
-    world = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                       "ne_50m",
-                                       "ne_50m_admin_0_countries.shp")
-                          ).to_crs(ALBERS)
-    geoms = [prov_u] + list(china.geometry) + list(world.geometry)
+    prov_u = safe_union(_raw)
+    geoms = [prov_u]
+    china_path = os.path.join(DATA, "boundaries", "datav", "100000_full.json")
+    if os.path.exists(china_path):
+        china = gpd.read_file(china_path).to_crs(ALBERS)
+        geoms += list(china.geometry)
+    world_path = os.path.join(DATA, "boundaries", "natural_earth", "ne_50m", "ne_50m_admin_0_countries.shp")
+    if os.path.exists(world_path):
+        world = gpd.read_file(world_path).to_crs(ALBERS)
+        geoms += list(world.geometry)
     from rasterio.features import rasterize
     mask = rasterize([(g, 1) for g in geoms], out_shape=(h, w),
                      transform=dst_tf, fill=0, dtype="uint8")

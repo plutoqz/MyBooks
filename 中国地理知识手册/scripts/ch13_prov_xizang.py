@@ -5,6 +5,7 @@ fig13-216 西藏自治区地势图（z9 DEM，300 m/px；7 地市编号）
 fig13-217 分地市常住人口（七普）与人口密度双联图
 fig13-218 西藏与尼泊尔：经济与人口对比双联图
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -81,7 +82,7 @@ def fig_nepal_compare(fname):
              "约 429 亿美元），人口为联合国口径（约 2 970 万）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.055, 1, 0.86))
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)
     print("nepal compare done")
 

@@ -5,6 +5,7 @@ fig13-133 重庆市地势图（z9 DEM，300 m/px；38 区县界线 + 地理要�
 fig13-134 三大功能板块人口与人口密度（七普，公报分组口径）
 fig13-135 重庆市地区生产总值（1997—2024）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -81,7 +82,7 @@ def fig134_boards():
              "中心城区 10 343 462 人、主城新区 10 778 908 人、渝东北 8 064 628 人、渝东南 2 867 161 人",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.06, 1, 0.88))
-    fig.savefig(os.path.join(FIGURES, "fig13-134_重庆功能板块人口.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-134_重庆功能板块人口.png"), dpi=DPI)
     plt.close(fig)
 
 

@@ -4,20 +4,22 @@
 fig2-10 港澳台位置图（全国主图 + 香港/澳门/台湾三幅放大插图）
 fig2-11 港澳台陆地面积与人口对比
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.ticker import FuncFormatter
 from pyproj import Transformer
 from shapely.geometry import box
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_CHINA, C_CHINA_FILL, C_LAND, C_TEXT, DATA, DPI,
-                   FIGURES, add_title, load_world, save_fig, set_extent_from,
-                   setup)
+                   FIGURES, add_title, china_outline, load_world, save_fig,
+                   set_extent_from, setup)
 
 OUT = FIGURES
 os.makedirs(OUT, exist_ok=True)
@@ -96,11 +98,21 @@ def fig2_10_hmt_map():
     ax_main.set_yticks([])
     for s in ax_main.spines.values():
         s.set_visible(False)
-    rest.plot(ax=ax_main, color=C_CHINA_FILL, edgecolor="#7f7f7f", linewidth=0.45)
-    hmt.plot(ax=ax_main, color=HMT_FILL, edgecolor=HMT_EDGE, linewidth=0.5)
+    # 省界（浅细）/ 国界（深粗）分层；断续线用实线描外环。
+    # 旧写法把 dash 当面用 ls="--" 描边，南海会碎成十余段小弧。
+    rest.plot(ax=ax_main, color=C_CHINA_FILL, edgecolor="#9aa5ad",
+              linewidth=0.32, zorder=2)
+    _all = gpd.GeoDataFrame(
+        pd.concat([rest[["geometry"]], hmt[["geometry"]]], ignore_index=True),
+        crs=rest.crs)
+    _out = china_outline(_all)
+    if _out is not None:
+        gpd.GeoSeries([_out], crs=rest.crs).boundary.plot(
+            ax=ax_main, color="#2f3a44", linewidth=1.15, zorder=3)
+    hmt.plot(ax=ax_main, color=HMT_FILL, edgecolor=HMT_EDGE,
+             linewidth=0.75, zorder=4)
     if len(dash):
-        dash.plot(ax=ax_main, facecolor="none", edgecolor="#4a6274",
-                  linewidth=0.7, ls="--")
+        dash.boundary.plot(ax=ax_main, color="#1b2631", linewidth=1.0, zorder=5)
 
     p = hmt[hmt["name"] == "台湾省"].geometry.iloc[0].representative_point()
     tx, ty = to_albers(125.6, 22.7)
@@ -110,8 +122,8 @@ def fig2_10_hmt_map():
                      arrowprops=dict(arrowstyle="-", color=HMT_FILL,
                                      lw=0.7, shrinkA=1, shrinkB=2))
     for disp, lon0, lat0, lon1, lat1 in [
-            ("香港", 114.17, 22.32, 111.6, 19.6),
-            ("澳门", 113.55, 22.20, 106.8, 17.4)]:
+            ("香港", 114.17, 22.32, 120.6, 17.5),
+            ("澳门", 113.55, 22.20, 106.8, 15.8)]:
         x0, y0 = to_albers(lon0, lat0)
         x1, y1 = to_albers(lon1, lat1)
         ax_main.annotate(disp, xy=(x0, y0), xytext=(x1, y1), fontsize=9.5,
@@ -178,7 +190,7 @@ def fig2_10_hmt_map():
              "行政界线：DataV.GeoAtlas areas_v3（2021.5，仅供学习交流）；插图底图：Natural Earth 50m（公共领域）\n"
              "示意地图，不作为权属划界依据",
              ha="center", va="bottom", fontsize=8.2, color="#555555")
-    fig.savefig(os.path.join(OUT, "fig2-10_港澳台位置图.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-10_港澳台位置图.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -192,17 +204,17 @@ def fig2_11_hmt_scale():
             (ax2, 2, "人口（万人）", False)]:
         names = [r[0] for r in rows]
         vals = [r[col] for r in rows]
-        bars = ax.barh(names, vals, color=C_CHINA_FILL, edgecolor="#b0572f",
-                       linewidth=0.8, height=0.55, zorder=3)
         if log:
+            ax.scatter(vals, names, color="#b0572f", s=55, zorder=3)
             ax.set_xscale("log")
             ax.set_xlim(10, 200000)
         else:
+            ax.barh(names, vals, color=C_CHINA_FILL, edgecolor="#b0572f",
+                    linewidth=0.8, height=0.55, zorder=3)
             ax.set_xlim(0, 2900)
-        for b, v in zip(bars, vals):
+        for y, v in enumerate(vals):
             txt = f"{v:,.1f}".replace(",", " ").rstrip("0").rstrip(".")
-            ax.text(b.get_width() * (1.25 if log else 1.015),
-                    b.get_y() + b.get_height() / 2,
+            ax.text(v * (1.25 if log else 1.015), y,
                     txt, va="center", ha="left", fontsize=9.2, color=C_TEXT,
                     zorder=4)
         ax.grid(axis="x", color="#dde3e8", lw=0.7, zorder=0)
@@ -224,7 +236,7 @@ def fig2_11_hmt_scale():
              "数据来源：香港特区政府统计处、澳门特区政府统计暨普查局，台湾有关方面公布之 2023 年统计",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.06, 1, 0.82))
-    fig.savefig(os.path.join(OUT, "fig2-11_港澳台规模对比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig2-11_港澳台规模对比.png"), dpi=DPI)
     plt.close(fig)
 
 

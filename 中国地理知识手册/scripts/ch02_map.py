@@ -6,6 +6,7 @@ fig2-4 分省陆地面积排序（万 km²）
 fig2-5 分省常住人口排序（2023 年末）
 fig2-6 分省人口密度分级地图
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -19,7 +20,8 @@ from pyproj import Transformer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_CHINA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes, save_fig, set_extent_from, setup)
+                   draw_borders, new_map_axes, save_fig, set_extent_from,
+                   setup)
 
 OUT = FIGURES
 os.makedirs(OUT, exist_ok=True)
@@ -56,12 +58,14 @@ DISPLAY_NAME = {
     "香港特别行政区": "香港", "澳门特别行政区": "澳门",
 }
 LEADERS = {  # 小政区：标注名 -> (锚点lon, lat, 标签lon, lat)
+    # 标签位置须互相拉开 ≥3°，原香港(111.4,20.1)/澳门(108.6,21.4) 仅差 1.3°，
+    # 在 10.5in 画幅下垂直间距不足 15 px，两行注记直接叠在一起。
     "北京市": ("北京", 116.40, 39.90, 112.8, 42.8),
     "天津市": ("天津", 117.35, 39.10, 121.6, 40.6),
     "上海市": ("上海", 121.47, 31.23, 125.8, 29.2),
     "宁夏回族自治区": ("宁夏", 106.20, 37.30, 100.8, 34.4),
-    "香港特别行政区": ("香港", 114.17, 22.32, 111.4, 20.1),
-    "澳门特别行政区": ("澳门", 113.55, 22.20, 108.6, 21.4),
+    "香港特别行政区": ("香港", 114.17, 22.32, 116.4, 20.0),
+    "澳门特别行政区": ("澳门", 113.55, 22.20, 111.6, 20.9),
 }
 
 
@@ -83,9 +87,8 @@ def fig2_3_admin_map():
     fig, ax = new_map_axes((10.5, 10.8))
     ax.set_facecolor("#dfe8f0")
     prov.plot(ax=ax, color=prov["region"].map(REGION_COLORS),
-              edgecolor="#7f7f7f", linewidth=0.45)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#4a6274", linewidth=0.7)
+              edgecolor="none")
+    draw_borders(ax, prov, dash, z=3)
 
     for _, row in prov.iterrows():
         nm = row["name"]
@@ -148,7 +151,7 @@ def barh_local(filename, df, value_col, label_col, title, subtitle, xlabel,
     fig.text(0.02, 0.958, subtitle, fontsize=9.3, color="#666666")
     fig.text(0.02, 0.008, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.945))
-    fig.savefig(os.path.join(OUT, filename), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, filename), dpi=DPI)
     plt.close(fig)
 
 
@@ -197,9 +200,8 @@ def fig2_6_density():
     for lab, fc in zip(labels, fills):
         sub = prov[prov["cls"] == lab]
         if len(sub):
-            sub.plot(ax=ax, color=fc, edgecolor="#8f8f8f", linewidth=0.45)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#4a6274", linewidth=0.7)
+            sub.plot(ax=ax, color=fc, edgecolor="none")
+    draw_borders(ax, prov, dash, z=3)
 
     legend_elems = [Patch(fc=fc, ec="#8f8f8f", label=f"{lab} 人/km²")
                     for lab, fc in zip(labels, fills)]

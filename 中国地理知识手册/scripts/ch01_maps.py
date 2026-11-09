@@ -17,8 +17,9 @@ from shapely.geometry import LineString, Point
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_CHINA, C_CHINA_FILL, C_EDGE, C_LAND, C_MARITIME,
-                   C_NEIGHBOR, C_SEA, add_north_arrow, add_title, load_china,
-                   load_world, new_map_axes, save_fig, setup)
+                   C_NEIGHBOR, C_SEA, add_north_arrow, add_title, china_borders,
+                   draw_borders, load_china, load_world, new_map_axes, save_fig,
+                   setup)
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures")
 os.makedirs(OUT, exist_ok=True)
@@ -64,7 +65,7 @@ def fig1_global_position():
     ax.text(-178, 25.2, "北回归线 23°26′N", fontsize=8, color="#8a6220")
 
     kw = dict(fontsize=11, color="#4a6274", style="italic", zorder=3)
-    ax.text(74, 47, "亚　欧　大　陆", ha="center", fontsize=13, color="#4a6274", zorder=3)
+    ax.text(45, 47, "亚欧大陆", ha="center", fontsize=13, color="#4a6274", zorder=3)
     ax.text(-100, 46, "北美洲", ha="center", **kw)
     ax.text(20, 8, "非洲", ha="center", **kw)
     ax.text(133, -25, "大洋洲", ha="center", **kw)
@@ -104,14 +105,25 @@ def fig1_extreme_points():
     lines_g = gpd.GeoSeries(lines, crs="EPSG:4326").to_crs(ALBERS)
 
     fig, ax = new_map_axes((9.5, 10.5))
-    china.plot(ax=ax, color=C_CHINA_FILL, edgecolor=C_CHINA, linewidth=0.7)
+    # 旧实现直接 china.plot(...) 把 34 个省 + 南海断续线的 10 个窄条面一起
+    # 填充成实心红条，图上就是一堆散在南海的红色碎块。此处把断续线拆出来
+    # 用外环实线描边。
+    prov, dash = china_borders(china)
+    # 省界不能和国界同色同粗：原来所有要素一律红线描边，34 条省界与国界
+    # 分不出层次。这里统一走 draw_borders（省界浅细、国界深粗、断续线实线）。
+    prov.plot(ax=ax, color=C_CHINA_FILL, edgecolor="none")
+    draw_borders(ax, prov, dash, z=4)
     lines_g.plot(ax=ax, color="#c0392b", lw=0.7, ls="--", alpha=0.7)
     ax.scatter(pts_g.x, pts_g.y, s=46, c="#8e2b20", edgecolors="white",
                linewidths=0.8, zorder=10)
 
-    label_pos = {"北端点": (0.55, 0.905), "东端点": (0.90, 0.62),
-                 "南端点": (0.30, 0.065), "西端点": (0.08, 0.74)}
-    for (name, (lon, lat, text)), (lx, ly) in zip(pts.items(), label_pos.values()):
+    # 标签框位置必须按名称取。旧写法用 zip(pts.items(), label_pos.values())，
+    # 而两个 dict 的键序不同（pts 是 北/南/东/西，label_pos 是 北/东/南/西），
+    # 结果"东端点"的说明被放到图幅左下角，引线从东北斜穿全图。
+    label_pos = {"北端点": (0.52, 0.895), "东端点": (0.80, 0.845),
+                 "南端点": (0.30, 0.075), "西端点": (0.09, 0.745)}
+    for name, (lon, lat, text) in pts.items():
+        lx, ly = label_pos[name]
         x, y = to_albers(lon, lat)
         ax.annotate(f"{name}\n{text}", xy=(x, y), xytext=(lx, ly),
                     textcoords="axes fraction", fontsize=9.5, color="#7b241c",
@@ -121,9 +133,10 @@ def fig1_extreme_points():
                     bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#c0392b",
                               lw=0.7, alpha=0.94))
 
-    set_extent_from(ax, china)
+    set_extent_from(ax, prov)
     add_title(ax, "中国领土四至点", "最北约 53°33′N，最南约 3°58′N，最西约 73°33′E，最东约 135°05′E")
-    add_north_arrow(ax, x=0.045)
+    # 不画竖直指北针：Albers 圆锥投影只有 105°E 中央经线方向为图面正北，
+    # 在左上角画一个朝上的箭头会误导方向判读；方向信息见页脚投影参数。
     save_fig(fig, ax, "fig1-2_领土四至点图.png",
              footer="东西跨约 61°32′（≈5 200 km），南北跨约 49°35′（≈5 500 km），东西时差约 4 小时\n"
                     "界线：DataV.GeoAtlas areas_v3（2021.5，仅供学习交流）；投影：Albers 等积圆锥（105°E，25°/47°N）")
@@ -136,14 +149,14 @@ LAND_NB = {  # 14 个陆上邻国：ISO3 -> (中文名, 边界长度, 标签锚�
     "MNG": ("蒙古", "约4 700 km", 102.5, 46.8),
     "KAZ": ("哈萨克斯坦", "约1 780 km", 81.0, 46.5),
     "KGZ": ("吉尔吉斯斯坦", "约1 100 km", 75.0, 40.8),
-    "TJK": ("塔吉克斯坦", "约450 km", 70.5, 37.8),
+    "TJK": ("塔吉克斯坦", "约450 km", 69.8, 36.4),
     "AFG": ("阿富汗", "约92 km", 64.5, 33.0),
     "PAK": ("巴基斯坦", "约596 km", 68.5, 27.5),
     "IND": ("印度", "约2 000 km（未划定）", 78.5, 20.5),
-    "NPL": ("尼泊尔", "约1 415 km", 85.5, 28.4),
-    "BTN": ("不丹", "约470 km（未正式划定）", 92.0, 25.6),
+    "NPL": ("尼泊尔", "约1 415 km", 84.6, 29.4),
+    "BTN": ("不丹", "约470 km*", 93.2, 22.6, 90.4, 27.3),
     "MMR": ("缅甸", "约2 185 km", 96.5, 18.5),
-    "LAO": ("老挝", "约505 km", 103.5, 16.5),
+    "LAO": ("老挝", "约505 km", 102.9, 15.4),
     "VNM": ("越南", "约1 450 km", 106.8, 19.6),
 }
 SEA_NB = {  # 6 个隔海相望国家
@@ -174,11 +187,24 @@ def fig1_neighbors():
     ax.set_xlim(58, 150)
     ax.set_ylim(-13, 58)
 
-    for iso3, (name, dist, lx, ly) in LAND_NB.items():
-        ax.text(lx, ly, f"{name}\n{dist}", fontsize=8.8, color="#6e5a10",
-                ha="center", va="center", zorder=12, linespacing=1.25,
-                bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="#b7950b",
-                          lw=0.6, alpha=0.9))
+    # 邻国注记：可选第 5、6 位为「引线锚点」(lon, lat)，用于南亚小国
+    # 注记框彼此压字的场合——框体挪到空白处，用细引线指回本国。
+    box_sty = dict(boxstyle="round,pad=0.28", fc="white", ec="#b7950b",
+                   lw=0.6, alpha=0.9)
+    for iso3, val in LAND_NB.items():
+        name, dist, lx, ly = val[0], val[1], val[2], val[3]
+        anchor = tuple(val[4:6]) if len(val) >= 6 else None
+        txt = f"{name}\n{dist}"
+        if anchor is not None:
+            ax.annotate(txt, xy=anchor, xytext=(lx, ly), fontsize=8.8,
+                        color="#6e5a10", ha="center", va="center",
+                        zorder=12, linespacing=1.25, bbox=dict(**box_sty),
+                        arrowprops=dict(arrowstyle="-", color="#b7950b",
+                                        lw=0.65, shrinkA=3, shrinkB=2))
+        else:
+            ax.text(lx, ly, txt, fontsize=8.8, color="#6e5a10",
+                    ha="center", va="center", zorder=12, linespacing=1.25,
+                    bbox=dict(**box_sty))
     for iso3, (name, lx, ly) in SEA_NB.items():
         ax.text(lx, ly, name, fontsize=9.5, color="#1a5276", ha="center",
                 va="center", zorder=12, style="italic",
@@ -196,9 +222,10 @@ def fig1_neighbors():
 
     add_title(ax, "中国的陆上邻国与隔海相望国家",
               "陆上邻国 14 个（与俄罗斯并列世界最多），隔海相望国家 6 个；陆地国界线总长约 2.28 万 km")
+    # 本图为经纬度坐标（非 Albers），图面正北朝上，指北针成立
     add_north_arrow(ax)
     save_fig(fig, ax, "fig1-4_周边邻国图.png",
-             footer="底图：Natural Earth 50m（公共领域）；边界长度为约数。示意地图，不作为权属划界依据。")
+             footer="底图：Natural Earth 50m（公共领域）；边界长度为约数。* 中不边界尚未正式划定。示意地图，不作为权属划界依据。")
 
 
 # ---------------------------------------------------------------- fig 1-7
@@ -206,7 +233,11 @@ def fig1_seas():
     china = load_china().to_crs(ALBERS)
 
     fig, ax = new_map_axes((9.5, 10.5))
-    china.plot(ax=ax, color=C_LAND, edgecolor="#4a6274", linewidth=0.6)
+    prov, dash = china_borders(china)
+    prov.plot(ax=ax, color=C_LAND, edgecolor="#4a6274", linewidth=0.6)
+    if len(dash):
+        # 与四至点图同：断续线窄条面若参与面填充，会在南海糊出一片碎块
+        dash.boundary.plot(ax=ax, color="#1b2631", linewidth=1.0, zorder=4)
     ax.set_facecolor(C_SEA)
 
     # 四大海区界线（教材通行界线）
@@ -239,7 +270,6 @@ def fig1_seas():
 
     set_extent_from(ax, china)
     add_title(ax, "中国的四大海域与近海格局", "渤海—黄海—东海—南海自北而南依次排布；图中断续线为南海九段线")
-    add_north_arrow(ax)
     save_fig(fig, ax, "fig1-7_四大海域图.png",
              footer="渤海、琼州海峡为中国内海；主张管辖海域约 300 万 km²，大陆海岸线约 1.8 万 km\n"
                     "界线：DataV.GeoAtlas areas_v3（2021.5，仅供学习交流）；海区界线为通行画法")

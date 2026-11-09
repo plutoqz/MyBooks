@@ -6,6 +6,7 @@ fig3-5 四大盆地与三大平原图  fig3-7 主要山脉及其最高峰海拔
                              fig3-8 特殊地貌类型分布示意图
 底图：AWS Terrain 山体阴影（复用 ch03_terrain 缓存），境外灰化。
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -17,7 +18,8 @@ from matplotlib.patches import Patch, Polygon as MplPolygon
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes, save_fig, set_extent_from, setup)
+                   draw_borders, new_map_axes, save_fig, set_extent_from,
+                   setup)
 from geo_features import (BASINS, DANXIA, DESERTS, GLACIER_ZONE, KARST,
                           MOUNTAINS, PLAINS, PLATEAUS, TREND_COLOR,
                           TREND_LABEL, VOLCANOES)
@@ -53,10 +55,7 @@ def region_map(fname, title, subtitle, regions, footer, label_offsets=None,
     ax.set_facecolor(C_SEA)
     ax.imshow(dem_base_rgba(dem), extent=extent, origin="upper",
               interpolation="bilinear", zorder=1)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.3, alpha=0.5, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
 
     seen_kinds = set()
     handles = []
@@ -144,10 +143,7 @@ def fig3_6_mountains():
     ax.set_facecolor(C_SEA)
     ax.imshow(dem_base_rgba(dem), extent=extent, origin="upper",
               interpolation="bilinear", zorder=1)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.3, alpha=0.5, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
 
     label_pos = {  # name -> (lon, lat, rotation)
         "喜马拉雅山脉": (82.5, 27.5, 13), "喀喇昆仑山脉": (75.4, 36.9, -28),
@@ -235,7 +231,7 @@ def fig3_7_peaks():
              "数据来源：2022 年珠峰高程 8 848.86 m（中尼联合公布）；其余为测绘部门公布值",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(FIGURES, "fig3-7_主要山脉最高峰海拔.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig3-7_主要山脉最高峰海拔.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -246,10 +242,7 @@ def fig3_8_special():
     ax.set_facecolor(C_SEA)
     ax.imshow(dem_base_rgba(dem), extent=extent, origin="upper",
               interpolation="bilinear", zorder=1)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.3, alpha=0.5, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
 
     # 喀斯特集中区
     xs, ys = zip(*[to_albers(lo, la) for lo, la in KARST])

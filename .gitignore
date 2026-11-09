@@ -5,14 +5,31 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 原始数据（约 1.5 GB，不入库；见 README「数据说明」）
+# 原始数据与统计底稿（不入库；见 README「数据说明」）
 中国地理知识手册/data/
+中国地理知识手册/中国省市数据/
 
-# 逐节审阅用 HTML（图片内嵌，约 190 MB，可随时用 md2html.py 重新生成）
+# 逐节审阅用 HTML 及单文件自包含 HTML（图片内嵌，体积巨大，可随时重新生成）
 中国地理知识手册/html/
+中国地理知识手册/output/*自包含*.html
 
-# 生成的 PDF（按需本地导出）
+# 生成的本地导出与大体积修订合订产物（按需本地脚本重新生成，见 scripts/ 构建说明）
+中国地理知识手册/output/**/*.pdf
 中国地理知识手册/output/*.pdf
+中国地理知识手册/output/上册修订/
+中国地理知识手册/output/下册修订/
+中国地理知识手册/output/修订*/
+中国地理知识手册/review_samples/
+
+# 本地备份、临时调试与日志
+中国地理知识手册/figures_bak*/
+中国地理知识手册/logs/
+中国地理知识手册/.tmp_debug/
+.tmp_debug/
+.workbuddy/
+*.txt
+中国地理知识手册/*.txt
+*.log
 
 # 编辑器 / 系统
 .vscode/

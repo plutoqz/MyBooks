@@ -5,6 +5,7 @@ fig13-213 青海省地势图（z9 DEM，300 m/px；8 市州编号）
 fig13-214 分市州常住人口（七普）与人口密度双联图
 fig13-215 分市州地区生产总值（2025）条形图
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -80,7 +81,7 @@ def fig_gdp(fig_no, gdp, fname, title, subtitle, footer):
     fig.text(0.02, 0.925, subtitle, fontsize=9.0, color="#666666")
     fig.text(0.02, 0.02, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.90))
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)
     print(f"fig13-{fig_no}: GDP sum = {sum(vals):,.1f}")
 

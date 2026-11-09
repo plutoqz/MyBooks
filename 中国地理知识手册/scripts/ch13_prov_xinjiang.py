@@ -6,6 +6,7 @@ fig13-210 新疆维吾尔自治区地势图（z9 DEM，300 m/px；14 地州市�
 fig13-211 分地州市常住人口（七普）与人口密度双联图
 fig13-212 分区域地区生产总值（2025，北疆/南疆/东疆）条形图
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -84,7 +85,7 @@ def fig_region_gdp(fname, title, subtitle, footer):
     fig.text(0.02, 0.87, subtitle, fontsize=9.0, color="#666666")
     fig.text(0.02, 0.02, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.06, 1, 0.85))
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)
     print(f"region gdp sum = {sum(vals):,.2f}")
 

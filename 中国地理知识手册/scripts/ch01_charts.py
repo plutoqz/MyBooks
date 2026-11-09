@@ -7,6 +7,7 @@ fig1-6 世界陆地边界最长的国家
 fig1-8 中国四大海域面积与平均深度
 fig1-9 世界主要国家专属经济区面积
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -68,7 +69,7 @@ def barh_chart(filename, labels, values, title, subtitle, xlabel,
     if footer:
         fig.text(0.02, 0.012, footer, fontsize=8.2, color="#555555")
     fig.tight_layout(rect=(0, 0.035 if footer else 0, 1, 0.905))
-    fig.savefig(os.path.join(OUT, filename), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, filename), dpi=DPI)
     plt.close(fig)
 
 
@@ -101,7 +102,7 @@ def barv_chart(filename, labels, values, title, subtitle, ylabel,
     if footer:
         fig.text(0.03, 0.015, footer, fontsize=8.2, color="#555555")
     fig.tight_layout(rect=(0, 0.04 if footer else 0, 1, 0.88))
-    fig.savefig(os.path.join(OUT, filename), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, filename), dpi=DPI)
     plt.close(fig)
 
 

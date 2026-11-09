@@ -11,6 +11,7 @@ fig13-3 北方地区专题图              fig13-6 青藏地区专题图
 底图：AWS Terrain 山体阴影（复用 ch03_terrain 缓存）；行政界线：DataV
 GeoAtlas areas_v3；河流：Natural Earth 50m；气候界线坐标复用 ch04_climate。
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -23,7 +24,8 @@ from matplotlib.patches import Patch, Polygon as MplPolygon
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes, set_extent_from, setup)
+                   china_outline, new_map_axes, set_extent_from, setup,
+                   load_ne_layer)
 from geo_features import (BASINS, CITIES, DESERTS, MOUNTAINS, PLAINS,
                           PLATEAUS, STAIR1)
 from ch04_climate import PREC400, T1_0
@@ -88,9 +90,7 @@ def load_prov():
 
 
 def load_world_foreign():
-    wld = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                     "ne_50m",
-                                     "ne_50m_admin_0_countries.shp"))
+    wld = load_ne_layer("ne_50m_admin_0_countries")
     return wld[wld["ADMIN"] != "China"].to_crs(ALBERS)
 
 
@@ -110,9 +110,14 @@ def _dash_in_view(dash, ax):
 
 
 def draw_dash(ax, dash, z=4.8):
+    """南海断续线。
+
+    DataV 数据中的断续线是 MultiPolygon（10 个窄条面），旧实现用
+    dash.plot(facecolor="none", ls="--") 描它的面轮廓，得到的是十余段
+    零碎小弧。正确做法取外环（.boundary）以实线描边，才成断续线。
+    """
     if _dash_in_view(dash, ax):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=z)
+        dash.boundary.plot(ax=ax, color="#1b2631", linewidth=1.0, zorder=z)
 
 
 def focus_base(ax, members, color, pad=0.05):
@@ -128,6 +133,11 @@ def focus_base(ax, members, color, pad=0.05):
     non.plot(ax=ax, color="#f3f1eb", ec="#b9b9b9", lw=0.25, zorder=2.6)
     mem.plot(ax=ax, fc=color, alpha=0.22, ec="none", zorder=4)
     mem.boundary.plot(ax=ax, color="#4a4a4a", lw=0.55, zorder=5)
+    # 国界线：省界并集外轮廓，明显深于区内省界
+    ol = china_outline(prov)
+    if ol is not None:
+        gpd.GeoSeries([ol], crs=prov.crs).boundary.plot(
+            ax=ax, color="#2f3a44", linewidth=1.05, zorder=5.2)
     draw_dash(ax, dash)
     minx, miny, maxx, maxy = mem.total_bounds
     dx, dy = (maxx - minx), (maxy - miny)
@@ -137,10 +147,7 @@ def focus_base(ax, members, color, pad=0.05):
 
 
 def _rivers(ax, mem):
-    riv = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                     "ne_50m_rivers_lake_centerlines",
-                                     "ne_50m_rivers_lake_centerlines.shp")
-                        ).to_crs(ALBERS)
+    riv = load_ne_layer("ne_50m_rivers_lake_centerlines").to_crs(ALBERS)
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     view = riv.cx[x0:x1, y0:y1]
@@ -203,83 +210,7 @@ def _lake_dot(ax, lon, lat):
             zorder=9)
 
 
-class TagBoard:
-    """收集编号标记，并在图下方生成两/三栏编号列表（图外说明）。"""
-
-    def __init__(self):
-        self.items = []
-
-    def add(self, ax, kind, name, lon, lat, dot=None, dx=0.0, dy=0.0,
-            leader=None):
-        n = len(self.items) + 1
-        if leader:
-            tx, ty = to_albers(*leader)
-            px, py = to_albers(lon, lat)
-            ax.plot([px, tx], [py, ty], color="#666666", lw=0.6,
-                    zorder=9.4)
-            x, y = tx, ty
-        else:
-            x, y = to_albers(lon + dx, lat + dy)
-        ax.plot([x], [y], "o", ms=10.5, mfc=TAG_COLOR[kind], mec="white",
-                mew=0.8, zorder=9.6)
-        ax.text(x, y, str(n), fontsize=6.8, color="white", ha="center",
-                va="center", fontweight="bold", zorder=10)
-        if dot == "star":
-            _mark_dot(ax, lon, lat, star=True)
-        elif dot == "mine":
-            _mine_dot(ax, lon, lat)
-        elif dot == "port":
-            _port_dot(ax, lon, lat)
-        elif dot == "harbor":
-            _harbor_dot(ax, lon, lat)
-        elif dot == "lake":
-            _lake_dot(ax, lon, lat)
-        elif dot == "city":
-            _mark_dot(ax, lon, lat)
-        self.items.append((kind, n, name))
-        return n
-
-    def render(self, fig, bottom=0.045, fs=9.2, cols=2, top=0.165, chunk=5):
-        """在图下方绘制编号说明列表（组内不跨栏拆分）。
-
-        bottom 是最下一行的下限（为图下脚注留位）：行为密度由
-        (top - bottom) / 每栏行数 决定，避免行数多时压到脚注上。
-        """
-        groups = []  # 每组: [(text, bold)]
-        for kind in ["k", "r", "l", "c", "m", "p", "h"]:
-            gitems = [it for it in self.items if it[0] == kind]
-            if not gitems:
-                continue
-            g = [(KIND_NAME[kind], True)]
-            for i in range(0, len(gitems), chunk):
-                part = gitems[i:i + chunk]
-                g.append(("　".join(f"{n} {name}" for _, n, name in part),
-                          False))
-            groups.append(g)
-        total = sum(len(g) for g in groups)
-        per_col = (total + cols - 1) // cols
-        columns, cur = [], []
-        for g in groups:
-            if cur and len(cur) + len(g) > per_col:
-                columns.append(cur)
-                cur = []
-            cur.extend(g)
-        if cur:
-            columns.append(cur)
-        # 列数超出预算时，反复合并相邻最小列，保证内容不丢
-        while len(columns) > cols:
-            sums = [len(columns[i]) + len(columns[i + 1])
-                    for i in range(len(columns) - 1)]
-            i = sums.index(min(sums))
-            columns[i:i + 2] = [columns[i] + columns[i + 1]]
-        lh = (top - bottom) / max(max(len(c) for c in columns), 1)
-        for ci, part in enumerate(columns[:cols]):
-            x = 0.02 + ci * (0.96 / cols)
-            for j, (txt, bold) in enumerate(part):
-                fig.text(x, top - j * lh, txt, fontsize=fs,
-                         fontweight="bold" if bold else "normal",
-                         color=C_TEXT if bold else "#444444",
-                         ha="left", va="top")
+from volume1_layout import NumberedMapIndex as TagBoard
 
 
 def _save_with_legend(fig, fname, footer, rect_top=1.0, footer_y0=0.012):
@@ -290,14 +221,14 @@ def _save_with_legend(fig, fname, footer, rect_top=1.0, footer_y0=0.012):
     for i, t in enumerate(lines):
         fig.text(0.5, footer_y0 + (len(lines) - 1 - i) * 0.015, t,
                  ha="center", va="bottom", fontsize=8.0, color="#555555")
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)
 
 
 # ---------------------------------------------------------------- fig 13-1
 def fig13_1_division():
     fig, ax = new_map_axes((10.5, 10.9))
-    fig.subplots_adjust(bottom=0.245, top=0.99, left=0.01, right=0.99)
+    fig.subplots_adjust(bottom=0.245, top=0.925, left=0.01, right=0.99)
     dem, extent = _dem_extent()
     ax.set_facecolor(C_SEA)
     ax.imshow(relief_rgba(dem), extent=extent, origin="upper",
@@ -308,6 +239,10 @@ def fig13_1_division():
         sub = prov[prov["name"].isin(names)]
         sub.plot(ax=ax, fc=R4_COLOR[reg], alpha=0.60, ec="white", lw=0.35,
                  zorder=4)
+    ol = china_outline(prov)
+    if ol is not None:
+        gpd.GeoSeries([ol], crs=prov.crs).boundary.plot(
+            ax=ax, color="#2f3a44", linewidth=1.05, zorder=5)
     draw_dash(ax, dash)
 
     styles = {"qhf": "-", "p400": (0, (5, 3)), "tp": (0, (4, 2, 1, 2))}
@@ -396,14 +331,14 @@ def fig13_2_shares():
              "数据：人口为 2023 年末常住人口（《中国统计年鉴 2024》）；GDP 为 2023 年地区生产总值，港澳台按当地统计折算（约数）；面积按省级行政区划合计",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(FIGURES, "fig13-2_四大区域占比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-2_四大区域占比.png"), dpi=DPI)
     plt.close(fig)
 
 
 # ---------------------------------------------------------------- fig 13-3
 def fig13_3_north():
     fig, ax = new_map_axes((11.8, 10.4))
-    fig.subplots_adjust(bottom=0.265, top=0.985, left=0.005, right=0.995)
+    fig.subplots_adjust(bottom=0.265, top=0.925, left=0.005, right=0.995)
     prov, dash, mem = focus_base(ax, REGION4["北方"], R4_COLOR["北方"],
                                  pad=0.06)
     _rivers(ax, mem)
@@ -461,7 +396,7 @@ def fig13_3_north():
 # ---------------------------------------------------------------- fig 13-4
 def fig13_4_south():
     fig, ax = new_map_axes((11.4, 11.2))
-    fig.subplots_adjust(bottom=0.27, top=0.985, left=0.005, right=0.995)
+    fig.subplots_adjust(bottom=0.27, top=0.925, left=0.005, right=0.995)
     prov, dash, mem = focus_base(ax, REGION4["南方"], R4_COLOR["南方"],
                                  pad=0.06)
     _rivers(ax, mem)
@@ -519,7 +454,7 @@ def fig13_4_south():
 # ---------------------------------------------------------------- fig 13-5
 def fig13_5_northwest():
     fig, ax = new_map_axes((12.4, 9.6))
-    fig.subplots_adjust(bottom=0.245, top=0.985, left=0.005, right=0.995)
+    fig.subplots_adjust(bottom=0.245, top=0.925, left=0.005, right=0.995)
     prov, dash, mem = focus_base(ax, REGION4["西北"], R4_COLOR["西北"],
                                  pad=0.05)
     _rivers(ax, mem)
@@ -579,7 +514,7 @@ def fig13_5_northwest():
 # ---------------------------------------------------------------- fig 13-6
 def fig13_6_qingzang():
     fig, ax = new_map_axes((9.8, 10.4))
-    fig.subplots_adjust(bottom=0.26, top=0.985, left=0.005, right=0.995)
+    fig.subplots_adjust(bottom=0.26, top=0.925, left=0.005, right=0.995)
     prov, dash, mem = focus_base(ax, REGION4["青藏"], R4_COLOR["青藏"],
                                  pad=0.06)
     _rivers(ax, mem)

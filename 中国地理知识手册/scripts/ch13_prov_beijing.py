@@ -8,6 +8,7 @@ fig13-8 分区常住人口（七普）与常住人口密度（七普口径，面
 注意：政区标注点一律取自 DataV 原始文件（EPSG:4326）的
 representative_point()，不得用投影后坐标再作投影。
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -20,9 +21,10 @@ from rasterio.transform import from_origin
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes, setup)
+                   new_map_axes, safe_union, setup, load_ne_layer)
 from ch03_terrain import to_albers
-from prov_pipeline import (prov_dem, prov_load, relief_rgba_p, to_albers)
+from prov_pipeline import (prov_dem, prov_load, raster_land, relief_rgba_p,
+                           to_albers)
 from ch13_regions import (TagBoard, _save_with_legend)
 
 ADCODE = "110000"
@@ -54,30 +56,32 @@ def fig07_relief():
     prov = prov_load(ADCODE)                      # Albers
     raw = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
                                      f"{ADCODE}_full.json"))  # EPSG:4326
-    union = prov.union_all()
+    union = safe_union(prov)
     core = prov[prov["name"].isin(CORE6)]
-    core_union = core.union_all()
+    core_union = safe_union(core)
 
     fig, ax = new_map_axes((9.8, 10.1))
-    fig.subplots_adjust(bottom=0.315, top=0.985, left=0.005, right=0.73)
+    fig.subplots_adjust(bottom=0.315, top=0.925, left=0.005, right=0.73)
+    ax.set_anchor("S")   # aspect=equal 会把 axes 撑满，靠底对齐留出标题位
     ax.set_facecolor(C_SEA)
-    ax.imshow(relief_rgba_p(dem, res), extent=extent, origin="upper",
-              interpolation="bilinear", zorder=1)
 
     tf = from_origin(minx, maxy, res, res)
     inside = rasterize([(union, 1)], out_shape=(h, w), transform=tf,
                        fill=0, dtype="uint8")
-    ax.imshow(_paper_overlay((h, w), ~np.isnan(dem), inside), extent=extent,
+    land = raster_land(h, w, tf, union)
+    if land is None:
+        land = ~np.isnan(dem)
+    dem_show = np.where(land, dem, np.nan)
+    ax.imshow(relief_rgba_p(dem_show, res), extent=extent, origin="upper",
+              interpolation="bilinear", zorder=1)
+    ax.imshow(_paper_overlay((h, w), land, inside), extent=extent,
               origin="upper", zorder=2.5)
 
     prov.boundary.plot(ax=ax, color="#4a4a4a", lw=0.45, zorder=5)
     gpd.GeoSeries([union], crs=ALBERS).boundary.plot(
         ax=ax, color="#2c3e50", lw=1.1, zorder=5.5)
 
-    riv = gpd.read_file(os.path.join(DATA, "boundaries", "natural_earth",
-                                     "ne_50m_rivers_lake_centerlines",
-                                     "ne_50m_rivers_lake_centerlines.shp")
-                        ).to_crs(ALBERS)
+    riv = load_ne_layer("ne_50m_rivers_lake_centerlines").to_crs(ALBERS)
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     view = riv.cx[x0:x1, y0:y1]
@@ -216,7 +220,7 @@ def fig08_stats():
              "数据：北京市第七次全国人口普查公报；界线：DataV.GeoAtlas areas_v3（2021.5，仅供学习交流）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.92))
-    fig.savefig(os.path.join(FIGURES, "fig13-8_北京分区人口.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-8_北京分区人口.png"), dpi=DPI)
     plt.close(fig)
 
 

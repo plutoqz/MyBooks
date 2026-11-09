@@ -10,6 +10,7 @@ fig_pop(...)     分区常住人口（七普）与人口密度双联条形图（
 
 政区标注点一律取自 DataV 原始文件（EPSG:4326）的 representative_point()。
 """
+from volume1_layout import save_volume_figure
 import math
 import os
 import sys
@@ -23,9 +24,10 @@ from rasterio.transform import from_origin
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title,
-                   new_map_axes)
+                   new_map_axes, load_ne_layer, safe_union)
 from ch03_terrain import to_albers
-from prov_pipeline import prov_dem, prov_load, prov_path, relief_rgba_p
+from prov_pipeline import (prov_dem, prov_load, prov_path, raster_land,
+                           relief_rgba_p)
 from ch13_regions import TagBoard, _save_with_legend
 
 
@@ -38,15 +40,11 @@ def _paper_overlay(shape, land, keep_mask, alpha=0.9):
 
 
 def _load_rivers():
-    return gpd.read_file(os.path.join(
-        DATA, "boundaries", "natural_earth", "ne_50m_rivers_lake_centerlines",
-        "ne_50m_rivers_lake_centerlines.shp")).to_crs(ALBERS)
+    return load_ne_layer("ne_50m_rivers_lake_centerlines").to_crs(ALBERS)
 
 
 def _load_lakes():
-    return gpd.read_file(os.path.join(
-        DATA, "boundaries", "natural_earth", "ne_50m_lakes",
-        "ne_50m_lakes.shp")).to_crs(ALBERS)
+    return load_ne_layer("ne_50m_lakes").to_crs(ALBERS)
 
 
 def prov_dem_excl(adcode, exclude=(), zoom=9, res=300.0, pad_frac=0.06):
@@ -138,12 +136,10 @@ def prov_dem_excl(adcode, exclude=(), zoom=9, res=300.0, pad_frac=0.06):
 
     _keep = keep.to_crs(ALBERS)
     _keep["geometry"] = _keep.geometry.buffer(0)  # 修复无效几何
-    prov_u = _keep.union_all()
+    prov_u = safe_union(_keep)
     china = gpd.read_file(os.path.join(
         DATA, "boundaries", "datav", "100000_full.json")).to_crs(ALBERS)
-    world = gpd.read_file(os.path.join(
-        DATA, "boundaries", "natural_earth", "ne_50m",
-        "ne_50m_admin_0_countries.shp")).to_crs(ALBERS)
+    world = load_ne_layer("ne_50m_admin_0_countries").to_crs(ALBERS)
     geoms = [prov_u] + list(china.geometry) + list(world.geometry)
     mask = rasterize([(g, 1) for g in geoms], out_shape=(h, w),
                      transform=dst_tf, fill=0, dtype="uint8")
@@ -184,7 +180,7 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
         prov = prov[~prov["name"].isin(exclude_names)]
         raw = raw[~raw["name"].isin(exclude_names)]
     prov["geometry"] = prov.geometry.buffer(0)  # 修复无效几何
-    union = prov.union_all()
+    union = safe_union(prov)
 
     bx0, by0, bx1, by1 = prov.total_bounds
     ratio = (bx1 - bx0) / (by1 - by0)
@@ -192,17 +188,24 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     fh = min(max(fw / ratio * 0.82, 8.6), 11.4)
     fig, ax = new_map_axes((fw, fh))
     right = 0.73 if inset_names else 0.985
-    fig.subplots_adjust(bottom=0.30, top=0.985, left=0.005, right=right)
+    fig.subplots_adjust(bottom=0.30, top=0.925, left=0.005, right=right)
+    ax.set_anchor("S")   # aspect=equal 会把 axes 撑满，靠底对齐留出标题位
     ax.set_facecolor(C_SEA)
-    ax.imshow(relief_rgba_p(dem, res), extent=extent, origin="upper",
-              interpolation="bilinear", zorder=1)
-    ax.set_xlim(extent[0], extent[1])
-    ax.set_ylim(extent[2], extent[3])
 
     tf = from_origin(minx, maxy, res, res)
     inside = rasterize([(union, 1)], out_shape=(h, w), transform=tf,
                        fill=0, dtype="uint8")
-    ax.imshow(_paper_overlay((h, w), ~np.isnan(dem), inside), extent=extent,
+    land = raster_land(h, w, tf, union)
+    if land is None:
+        land = ~np.isnan(dem)
+    # 海面不给高程：排除重投影边缘残留的「有效值」窄条（台湾以东海面
+    # 会因此出现一道 0 m 的浅色竖线）。
+    dem_show = np.where(land, dem, np.nan)
+    ax.imshow(relief_rgba_p(dem_show, res), extent=extent, origin="upper",
+              interpolation="bilinear", zorder=1)
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+    ax.imshow(_paper_overlay((h, w), land, inside), extent=extent,
               origin="upper", zorder=2.5)
 
     prov.boundary.plot(ax=ax, color="#4a4a4a", lw=0.5, zorder=5)
@@ -213,6 +216,8 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     view = riv.cx[x0:x1, y0:y1]
+    if len(view):
+        view = gpd.clip(view, gpd.GeoSeries([union], crs=ALBERS))
     if len(view):
         view.plot(ax=ax, color="#3d6fa8", lw=1.0, zorder=6)
     # 湖面画在淡出层之下：省内清晰、省外随纸色淡出
@@ -226,7 +231,7 @@ def fig_relief(fig_no, adcode, fname, title, subtitle, geo_tags=(),
     if inset_names:
         core = prov[prov["name"].isin(inset_names)]
         core["geometry"] = core.geometry.buffer(0)
-        core_union = core.union_all()
+        core_union = safe_union(core)
         cb = raw[raw["name"].isin(inset_names)].total_bounds  # EPSG:4326
         padx = (cb[2] - cb[0]) * 0.12 + 0.01
         pady = (cb[3] - cb[1]) * 0.12 + 0.008
@@ -349,5 +354,5 @@ def fig_pop(fig_no, adcode, pop7, fname, suptitle, footer, panel_titles=None,
              fontsize=9.0, color="#666666")
     fig.text(0.02, 0.02, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.92))
-    fig.savefig(os.path.join(FIGURES, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, fname), dpi=DPI)
     plt.close(fig)

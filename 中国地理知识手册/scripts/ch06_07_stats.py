@@ -6,6 +6,7 @@ fig6-2 耕地面积变化          fig7-2 森林覆盖率变化（1949—2023）
 fig6-3 分省森林覆盖率前十二  fig7-3 主要地震带与代表性强震
 fig6-4 主要矿产品产量世界占比
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -15,8 +16,8 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Polygon as MplPolygon
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from style import C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title, new_map_axes, \
-    save_fig, set_extent_from, setup
+from style import C_SEA, C_TEXT, DATA, DPI, FIGURES, add_title, draw_borders, \
+    new_map_axes, save_fig, set_extent_from, setup
 
 OUT = FIGURES
 
@@ -50,7 +51,7 @@ def barh_generic(fname, title, subtitle, rows, xlabel, footer, colors,
     fig.text(0.02, 0.952, subtitle, fontsize=9.3, color="#666666", va="top")
     fig.text(0.02, 0.012, footer, fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(OUT, fname), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, fname), dpi=DPI)
     plt.close(fig)
 
 
@@ -86,9 +87,7 @@ def fig6_2_cropland():
         ax.text(b.get_x() + b.get_width() / 2, v + 0.06, f"{v:.2f}",
                 ha="center", fontsize=10, color=C_TEXT, zorder=4)
     ax.axhline(18, color="#c0392b", lw=1.2, ls="--")
-    ax.text(2.38, 18.08, "18 亿亩红线", fontsize=8.6, color="#c0392b",
-            ha="right")
-    ax.set_ylim(17.5, 21)
+    ax.set_ylim(0, 22)
     ax.grid(axis="y", color="#dde3e8", lw=0.7, zorder=0)
     ax.set_axisbelow(True)
     for s in ("top", "right"):
@@ -102,10 +101,10 @@ def fig6_2_cropland():
     fig.text(0.02, 0.952, "2010 年代耕地净减少约 1.1 亿亩；2021 年起连续三年净增加",
              fontsize=9.3, color="#666666", va="top")
     fig.text(0.02, 0.012,
-             "数据来源：第二次、第三次全国国土调查主要数据公报，自然资源部 2023 年度全国国土变更调查",
+             "红色虚线：18 亿亩耕地保护红线。数据：第二次、第三次全国国土调查及 2023 年度全国国土变更调查。",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig6-2_耕地面积变化.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig6-2_耕地面积变化.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -145,7 +144,7 @@ def fig6_3_forest():
              "数据来源：国家林业和草原局（第九次全国森林资源清查及各省公布值，约数）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(OUT, "fig6-3_分省森林覆盖率.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig6-3_分省森林覆盖率.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -180,7 +179,7 @@ def fig6_4_minerals():
              "数据来源：USGS《矿产品摘要》、国家统计局、中国钢铁工业协会等（约数）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(OUT, "fig6-4_主要矿产品产量世界占比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig6-4_主要矿产品产量世界占比.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -229,10 +228,7 @@ def fig7_1_vegetation():
     from style import ALBERS
     prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
     dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.boundary.plot(ax=ax, color="#5a5a5a", linewidth=0.28, alpha=0.5, zorder=6)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=7)
+    draw_borders(ax, prov, dash, z=6)
     set_extent_from(ax, prov)
     add_title(ax, "中国主要自然带分布（示意）",
               "森林—草原—荒漠的东西向更替与纬向温度带的叠加；青藏高寒区自成体系")
@@ -269,7 +265,7 @@ def fig7_2_forest_curve():
              "数据来源：国家林业和草原局历次全国森林资源清查、2023 年林草公报", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig7-2_森林覆盖率变化.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig7-2_森林覆盖率变化.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -310,10 +306,7 @@ def fig7_3_quakes():
                                      "100000_full.json"))
     prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
     dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.boundary.plot(ax=ax, color="#6a6a6a", linewidth=0.28, alpha=0.5, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    draw_borders(ax, prov, dash, z=3)
     label_pos = {"南北地震带": (103.9, 27.0, -80), "华北地震带": (121.9, 42.1, -35),
                  "东南沿海地震带": (116.0, 22.6, 12), "天山地震带": (82.0, 42.0, 8),
                  "青藏高原周缘地震带": (88.0, 33.5, 0)}
@@ -327,20 +320,18 @@ def fig7_3_quakes():
                 ha="center", va="center", zorder=8,
                 bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="none",
                           alpha=0.85))
+    from volume1_layout import NumberedMapIndex
+    from ch13_regions import _save_with_legend
+    index = NumberedMapIndex()
     for name, lo, la in QUAKES:
-        x, y = to_albers(lo, la)
-        ax.plot([x], [y], "*", ms=10, color="#1a1a1a", zorder=9)
-        dx = 0.45 if lo < 118 else -1.9
-        ax.text(*to_albers(lo + dx, la - 0.35), name, fontsize=7.4,
-                color="#1a1a1a", zorder=9,
-                bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none",
-                          alpha=0.8))
+        index.add(ax, "quake", name, lo, la)
     set_extent_from(ax, prov)
-    add_title(ax, "主要地震带与代表性强震（★）",
+    add_title(ax, "主要地震带与代表性强震",
               "中国地处环太平洋地震带与欧亚地震带之间，震源浅、分布广")
-    save_fig(fig, ax, "fig7-3_地震带与强震分布.png",
-             footer="地震带为示意勾绘，震级为面波震级或矩震级通行口径；底图：AWS Terrain Tiles\n"
-                    "示意地图，不作为权属划界依据")
+    index.render(fig)
+    _save_with_legend(fig, "fig7-3_地震带与强震分布.png",
+                     ["地震带为示意勾绘，震级沿用各事件通行口径；底图：AWS Terrain Tiles",
+                      "示意地图，不作为权属划界依据"])
 
 
 if __name__ == "__main__":

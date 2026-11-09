@@ -4,6 +4,7 @@
 fig13-149 澳门在珠江口的位置（粤港澳大湾区局部；港珠澳大桥示意）
 fig13-150 澳门本地生产总值与入境旅客（2019—2024）
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -12,7 +13,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from style import (ALBERS, C_CHINA, C_SEA, C_TEXT, DATA, DPI, FIGURES,
-                   add_title, new_map_axes, setup)
+                   add_title, new_map_axes, setup, load_ne_layer)
 from pyproj import Transformer
 
 _T = Transformer.from_crs("EPSG:4326", ALBERS, always_xy=True)
@@ -36,12 +37,11 @@ def fig149_locator():
     gd = prov[prov["name"] == "广东省"]
     hk = prov[prov["name"] == "香港特别行政区"]
     mo = prov[prov["name"] == "澳门特别行政区"]
-    riv = gpd.read_file(os.path.join(
-        DATA, "boundaries", "natural_earth", "ne_50m_rivers_lake_centerlines",
-        "ne_50m_rivers_lake_centerlines.shp")).to_crs(ALBERS)
+    riv = load_ne_layer("ne_50m_rivers_lake_centerlines").to_crs(ALBERS)
 
     fig, ax = new_map_axes((9.8, 8.6))
-    fig.subplots_adjust(bottom=0.10, top=0.985, left=0.01, right=0.99)
+    fig.subplots_adjust(bottom=0.10, top=0.925, left=0.01, right=0.99)
+    ax.set_anchor("S")   # aspect=equal 会把 axes 撑满，靠底对齐留出标题位
     ax.set_facecolor(C_SEA)
 
     gd.plot(ax=ax, color="#f2efe9", edgecolor="#b9b2a4", linewidth=0.5, zorder=2)
@@ -91,7 +91,7 @@ def fig149_locator():
              "界线：DataV.GeoAtlas areas_v3（2021.5，仅供学习交流）；河流：Natural Earth 50m；"
              "示意地图，不作为权属划界依据；投影：Albers 等积圆锥",
              ha="center", va="bottom", fontsize=8, color="#555555")
-    fig.savefig(os.path.join(FIGURES, "fig13-149_澳门区位图.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-149_澳门区位图.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -130,7 +130,7 @@ def fig150_gdp_visitors():
              "数据：澳门特别行政区政府统计暨普查局《本地生产总值》《入境旅客》历年统计",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.04, 1, 0.88))
-    fig.savefig(os.path.join(FIGURES, "fig13-150_澳门GDP与旅客.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(FIGURES, "fig13-150_澳门GDP与旅客.png"), dpi=DPI)
     plt.close(fig)
 
 

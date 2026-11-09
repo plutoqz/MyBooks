@@ -14,6 +14,7 @@ import markdown
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECTIONS = os.path.join(ROOT, "sections")
+SECTIONS_VOL2 = os.path.join(ROOT, "sections_vol2")
 HTML = os.path.join(ROOT, "html")
 
 CSS = """
@@ -53,21 +54,27 @@ code { background: #f0ede8; padding: 1px 5px; border-radius: 3px; }
 """
 
 
-def img_to_data_uri(match):
-    alt, path = match.group(1), match.group(2)
-    full = os.path.normpath(os.path.join(SECTIONS, path))
-    if not os.path.exists(full):
-        return match.group(0)
-    with open(full, "rb") as f:
-        uri = "data:image/png;base64," + base64.b64encode(f.read()).decode()
-    return f"![{alt}](<{uri}>)" if False else f'<img src="{uri}" alt="{alt}" />'
-
-
 def convert(md_path):
     with open(md_path, encoding="utf-8") as f:
         text = f.read()
+    md_dir = os.path.dirname(md_path)
+
+    def _replace_img(match):
+        alt, path = match.group(1), match.group(2)
+        full = os.path.normpath(os.path.join(md_dir, path))
+        if not os.path.exists(full):
+            full_fallback = os.path.normpath(os.path.join(SECTIONS, path))
+            if os.path.exists(full_fallback):
+                full = full_fallback
+            else:
+                print(f"Warning: image not found: {path} (referenced in {os.path.basename(md_path)})")
+                return match.group(0)
+        with open(full, "rb") as f:
+            uri = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+        return f'<img src="{uri}" alt="{alt}" />'
+
     # 图片先替换为内嵌 <img>
-    text = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", img_to_data_uri, text)
+    text = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", _replace_img, text)
     body = markdown.markdown(text, extensions=["tables", "sane_lists"])
     title = os.path.basename(md_path).rsplit(".", 1)[0]
     html = f"""<!DOCTYPE html>
@@ -93,6 +100,10 @@ def convert(md_path):
 if __name__ == "__main__":
     key = sys.argv[1] if len(sys.argv) > 1 else ""
     os.makedirs(HTML, exist_ok=True)
-    mds = sorted(f for f in os.listdir(SECTIONS) if f.endswith(".md") and key in f)
-    for f in mds:
-        print("->", convert(os.path.join(SECTIONS, f)))
+    all_md_paths = []
+    if os.path.exists(SECTIONS):
+        all_md_paths += [os.path.join(SECTIONS, f) for f in os.listdir(SECTIONS) if f.endswith(".md") and key in f]
+    if os.path.exists(SECTIONS_VOL2):
+        all_md_paths += [os.path.join(SECTIONS_VOL2, f) for f in os.listdir(SECTIONS_VOL2) if f.endswith(".md") and key in f]
+    for p in sorted(all_md_paths):
+        print("->", convert(p))

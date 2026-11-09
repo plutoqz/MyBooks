@@ -1,6 +1,8 @@
 # 构建与制图依赖
-# 仅生成 HTML/PDF 时只需 markdown（build_pdf.py 调用本机浏览器，无额外依赖）
+# HTML 组装、上册 PDF 排版与图件检查
 markdown>=3.4
+reportlab>=4.0
+pymupdf>=1.24
 
 # 重新生成图表时另行安装（需要 data/ 原始数据）
 numpy>=1.24

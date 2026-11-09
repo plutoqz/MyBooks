@@ -10,6 +10,7 @@ fig11-2 分省 GDP 排序       fig12-2 货运量结构
 fig11-3 四大板块构成        fig12-3 “八纵八横”高铁网示意
                             fig12-4 沿海港口货物吞吐量
 """
+from volume1_layout import save_volume_figure
 import os
 import sys
 
@@ -19,8 +20,12 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Patch, Polygon as MplPolygon
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import matplotlib.patheffects as pe
+
 from style import (ALBERS, C_CHINA, C_SEA, C_TEXT, DATA, DPI, FIGURES,
-                   add_title, new_map_axes, save_fig, set_extent_from, setup)
+                   add_title, china_borders, draw_borders, new_map_axes,
+                   plot_china_frame, save_fig, set_extent_from, setup)
+from mapkit import LabelPlacer, reserve_axes_boxes
 from ch03_terrain import RES_A, hillshade, load_cache, to_albers
 
 OUT = FIGURES
@@ -40,18 +45,42 @@ def _map_base(ax, sea="#dfe8f0"):
               zorder=1)
 
 
-def _prov_frame(ax, fill=None):
+def _dem_base():
+    """全国 DEM 晕渲底图数据（复用 ch03_terrain 的缓存，不重复下载）。"""
     import geopandas as gpd
+    dem, minx, maxy = load_cache()
+    h, w = dem.shape
+    extent = (minx, minx + w * RES_A, maxy - h * RES_A, maxy)
     gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
                                      "100000_full.json"))
-    prov = gdf[gdf["name"].notna() & (gdf["name"].str.len() > 0)].to_crs(ALBERS)
-    dash = gdf[gdf["name"].isna() | (gdf["name"].str.len() == 0)].to_crs(ALBERS)
-    prov.plot(ax=ax, color=fill, edgecolor="#7f7f7f", linewidth=0.4, zorder=3) \
-        if fill else prov.boundary.plot(ax=ax, color="#5a5a5a", linewidth=0.28,
-                                        alpha=0.5, zorder=3)
-    if len(dash):
-        dash.plot(ax=ax, facecolor="none", edgecolor="#3b5872", linewidth=0.7,
-                  ls="--", zorder=4)
+    prov, dash = china_borders(gdf.to_crs(ALBERS))
+    return dem, extent, prov, dash
+
+
+def _relief(dem):
+    """淡灰晕渲：只提供地形骨架，不抢线路的颜色。"""
+    h, w = dem.shape
+    sh = hillshade(dem)
+    rgba = np.zeros((h, w, 4))
+    gray = 0.88 + 0.12 * sh
+    rgba[:, :, 0] = gray * 1.005
+    rgba[:, :, 1] = gray
+    rgba[:, :, 2] = gray * 0.972
+    rgba[:, :, 3] = np.where(np.isnan(dem), 0.0, 1.0)
+    return rgba
+
+
+def _prov_frame(ax, fill=None):
+    """中国地图骨架：国界（深）+ 省界（浅）+ 南海断续线（实线）。
+
+    旧实现只画 prov.boundary（0.28pt 灰）且把断续线当成面用 ls="--" 描边，
+    结果全国图没有国界、南海断续线碎成十余段小弧。统一走 style.plot_china_frame。
+    """
+    import geopandas as gpd
+    gdf = gpd.read_file(os.path.join(DATA, "boundaries", "datav",
+                                     "100000_full.json")).to_crs(ALBERS)
+    prov, _ = plot_china_frame(ax, gdf, z=3,
+                               facecolor=fill if fill else None)
     return prov
 
 
@@ -93,69 +122,33 @@ def _city(ax, name, r_deg=None, ms=None, label=True, fs=7.8, color="#8e2a1e",
 
 
 # ---------------------------------------------------------------- fig 10-1
-def fig10_1_pyramid():
-    tiers = [("超大城市\n（>1 000 万）", 7), ("特大城市\n（500—1 000 万）", 14),
-             ("Ⅰ型大城市\n（300—500 万）", 14), ("Ⅱ型大城市\n（100—300 万）", 71),
-             ("中等城市\n（50—100 万）", 116), ("Ⅰ型小城市\n（<50 万）", 139)]
-    fig, ax = plt.subplots(figsize=(9.4, 5.6))
-    total = sum(t[1] for t in tiers)
-    left = (total - tiers[0][1]) / 2
-    colors = ["#c0392b", "#e67e22", "#f1c40f", "#7dcea0", "#5dade2", "#a9cce3"]
-    for i, (name, n) in enumerate(tiers):
-        width = n
-        ax.add_patch(MplPolygon([(left, i), (left + width, i),
-                                 (left + width + 0, i + 1),
-                                 (left, i + 1)],
-                                closed=True, fc=colors[i], ec="white", lw=1.2,
-                                zorder=3))
-        ax.text(left + width / 2, i + 0.5, f"{name}\n{n} 个", ha="center",
-                va="center", fontsize=9.2, color="#1a1a1a" if i > 1 else "white",
-                zorder=4, linespacing=1.4)
-        left += 0
-        left = (total - width) / 2 if False else left
-        left = (total - width) / 2
-    ax.set_xlim(0, total)
-    ax.set_ylim(0, len(tiers))
-    ax.axis("off")
-    fig.text(0.02, 0.982, "中国城市规模金字塔（七普城区人口口径）", fontsize=14.5,
-             fontweight="bold", color=C_TEXT, va="top")
-    fig.text(0.02, 0.945, "城市规模按城区常住人口划分（国务院 2014 年标准）；底座小城市数量最多",
-             fontsize=9.3, color="#666666", va="top")
-    fig.text(0.02, 0.012,
-             "数据来源：住房和城乡建设部《2020 年城市建设统计年鉴》与第七次人口普查（约数）",
-             fontsize=8, color="#555555")
-    fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig10-1_城市规模金字塔.png"), dpi=DPI)
-    plt.close(fig)
+from volume1_topics import city_sizes as fig10_1_pyramid
 
 
 # ---------------------------------------------------------------- fig 10-2
 def fig10_2_megacities():
+    from volume1_layout import NumberedMapIndex
+    from ch13_regions import _save_with_legend
     fig, ax = new_map_axes((10.5, 10.8))
+    fig.subplots_adjust(bottom=0.18, top=0.91)
     _map_base(ax)
-    _prov_frame(ax)
+    prov = _prov_frame(ax)
     mega = ["上海", "北京", "深圳", "重庆", "广州", "成都", "天津"]
     huge = ["武汉", "东莞", "西安", "杭州", "佛山", "南京", "沈阳", "青岛",
             "济南", "长沙", "哈尔滨", "郑州", "昆明", "大连"]
+    set_extent_from(ax, prov)
+    index = NumberedMapIndex()
     for c in mega:
-        _city(ax, c, r_deg=1.35, fs=8.8)
+        index.add(ax, "mega", c, *CITY_XY[c])
     for c in huge:
-        _city(ax, c, r_deg=0.85, fs=7.6, color="#e67e22")
-    legend_elems = [Circle((0, 0), 1, fc="#8e2a1e", alpha=0.75,
-                           label="超大城市（城区人口 >1 000 万，7 个）"),
-                    Circle((0, 0), 1, fc="#e67e22", alpha=0.75,
-                           label="特大城市（500 万—1 000 万，14 个）")]
-    ax.legend(handles=legend_elems, loc="lower left", bbox_to_anchor=(0.005, 0.08),
-              fontsize=8.8, framealpha=0.92, edgecolor="#cccccc")
-    set_extent_from(ax, _prov_frame(ax) if False else
-                    __import__("geopandas").read_file(
-                        os.path.join(DATA, "boundaries", "datav",
-                                     "100000_full.json")).to_crs(ALBERS))
+        index.add(ax, "huge", c, *CITY_XY[c])
     add_title(ax, "超大城市与特大城市的分布",
               "7 座超大城市与 14 座特大城市全部位于胡焕庸线东南侧")
-    save_fig(fig, ax, "fig10-2_超大特大城市分布.png",
-             footer="底图：DataV.GeoAtlas 与 AWS Terrain Tiles；圆面积示意人口规模\n"
-                    "示意地图，不作为权属划界依据")
+    index.render(fig)
+    _save_with_legend(
+        fig, "fig10-2_超大特大城市分布.png",
+        ["超大城市：城区常住人口超过 1 000 万；特大城市：500 万—1 000 万。",
+         "底图：DataV.GeoAtlas 与 AWS Terrain Tiles；示意地图，不作为权属划界依据。"])
 
 
 # ---------------------------------------------------------------- fig 10-3
@@ -174,24 +167,24 @@ CLUSTERS = {
 
 
 def fig10_3_clusters():
+    from volume1_layout import NumberedMapIndex
+    from ch13_regions import _save_with_legend
     fig, ax = new_map_axes((10.5, 10.8))
+    fig.subplots_adjust(bottom=0.18, top=0.91)
     _map_base(ax)
-    _prov_frame(ax)
+    prov = _prov_frame(ax)
+    set_extent_from(ax, prov)
+    index = NumberedMapIndex()
     for name, (lo, la, r) in CLUSTERS.items():
         x, y = to_albers(lo, la)
-        ax.add_patch(Circle((x, y), r * 111000 * 0.55, fc="#2e86c1", ec="#1b4f72",
-                            lw=1.0, alpha=0.35, zorder=6))
-        ax.text(x, y, name, fontsize=7.8, color="#1b4f72", ha="center",
-                va="center", zorder=8)
-    set_extent_from(ax, _prov_frame(ax) if False else
-                    __import__("geopandas").read_file(
-                        os.path.join(DATA, "boundaries", "datav",
-                                     "100000_full.json")).to_crs(ALBERS))
+        index.add(ax, "cluster", name, lo, la)
     add_title(ax, "全国主要城市群的分布",
-              "“19+2”城市群格局；圆圈为示意范围，五大国家级城市群承担国家战略")
-    save_fig(fig, ax, "fig10-3_主要城市群分布.png",
-             footer="依据《“十四五”规划纲要》城市群布局示意勾绘；底图：AWS Terrain Tiles\n"
-                    "示意地图，不作为权属划界依据")
+              "19 个城市群示意中心；圆圈表示概略位置")
+    index.render(fig)
+    _save_with_legend(
+        fig, "fig10-4_主要城市群分布.png",
+        ["依据《“十四五”规划纲要》城市群布局示意勾绘；底图：AWS Terrain Tiles。",
+         "示意地图，不作为权属划界依据。"])
 
 
 # ---------------------------------------------------------------- fig 10-4
@@ -233,7 +226,7 @@ def fig10_4_cluster_compare():
              "数据来源：各地 2023 年统计公报汇总；粤港澳大湾区含港澳（当地口径折算，约数）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig10-4_五大城市群对比.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig10-5_五大城市群对比.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -286,7 +279,7 @@ def fig11_1_gdp():
              "数据来源：国家统计局历年统计公报（现价，2025 年为初步核算约数）；人均 GDP 按当年价",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig11-1_经济总量与人均.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig11-1_经济总量与人均.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -323,7 +316,7 @@ def fig11_2_prov_gdp():
              "数据来源：各省 2023 年国民经济和社会发展统计公报", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.045, 1, 0.935))
-    fig.savefig(os.path.join(OUT, "fig11-2_分省GDP排序.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig11-2_分省GDP排序.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -361,7 +354,7 @@ def fig11_3_boards():
              "数据来源：国家统计局分省数据汇总（2023 年，约数）", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig11-3_四大板块.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig11-3_四大板块.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -397,7 +390,7 @@ def fig11_4_grain():
              "数据来源：国家统计局历年统计公报（谷物与豆类薯类合计口径）", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig11-4_粮食产量.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig11-4_粮食产量.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -468,7 +461,7 @@ def fig11_6_energy():
              "数据来源：国家统计局、国家能源局公开数据（约数）；2030 年非化石能源目标 25%",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
-    fig.savefig(os.path.join(OUT, "fig11-6_能源消费结构.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig11-6_能源消费结构.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -503,7 +496,7 @@ def fig11_7_strategy():
                                      "100000_full.json")).to_crs(ALBERS))
     add_title(ax, "重大区域发展战略的空间布局",
               "“四板块 + 五战略”：西部大开发、东北振兴、中部崛起、东部率先，叠加五大跨区域战略")
-    save_fig(fig, ax, "fig11-7_重大区域战略.png",
+    save_fig(fig, ax, "fig11-8_重大区域战略.png",
              footer="战略覆盖范围为示意勾绘；底图：AWS Terrain Tiles；投影：Albers 等积圆锥\n"
                     "示意地图，不作为权属划界依据")
 
@@ -557,7 +550,7 @@ def fig12_1_network():
              "数据来源：交通运输部《交通运输行业发展统计公报》（2024 年）", fontsize=8,
              color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig12-1_交通网络增长.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig12-1_交通网络增长.png"), dpi=DPI)
     plt.close(fig)
 
 
@@ -566,13 +559,13 @@ def fig12_2_freight():
     labels = ["公路", "水运", "铁路", "管道", "民航"]
     vals = [72.9, 16.7, 9.2, 1.2, 0.01]
     colors = ["#e59866", "#2e86c1", "#c0392b", "#7d3c98", "#bdc3c7"]
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.0, 4.2),
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.0, 5.5),
                                    gridspec_kw={"width_ratios": [1, 1.2]})
     w, _ = ax1.pie(vals, colors=colors, startangle=90, counterclock=False,
                    wedgeprops=dict(width=0.42, edgecolor="white"))
     ax1.legend(w, [f"{l}  {v}%" for l, v in zip(labels, vals)], loc="center",
                fontsize=9, frameon=False)
-    ax1.set_title("货运量结构（2024 年，占全社会货运量）", fontsize=10.5,
+    ax1.set_title("货运量结构（2024 年）", fontsize=10.5,
                   color=C_TEXT)
     ports = [("宁波舟山", 13.24), ("唐山", 8.42), ("上海", 7.76), ("青岛", 7.06),
              ("广州", 6.75), ("苏州", 5.93), ("日照", 5.93), ("天津", 5.60)]
@@ -599,55 +592,214 @@ def fig12_2_freight():
              "数据来源：交通运输部《2024 年交通运输行业发展统计公报》、各港务集团公开数据（约数）",
              fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
-    fig.savefig(os.path.join(OUT, "fig12-2_货运结构与港口.png"), dpi=DPI)
+    save_volume_figure(fig, os.path.join(OUT, "fig12-2_货运结构与港口.png"), dpi=DPI)
     plt.close(fig)
 
 
 # ---------------------------------------------------------------- fig 12-3
-RAIL_LINES = {
-    "京沪通道": ("#c0392b", ["北京", "济南", "南京", "上海"]),
-    "京哈—京港澳通道": ("#1f618d", ["哈尔滨", "沈阳", "北京", "郑州", "武汉", "广州", "香港"]),
-    "京昆通道": ("#6c3483", ["北京", "石家庄", "太原", "西安", "成都", "昆明"]),
-    "兰（西）广通道": ("#b9770e", ["西宁", "兰州", "成都", "贵阳", "广州"]),
-    "沿海通道": ("#1e8449", ["哈尔滨", "大连", "青岛", "上海", "福州", "深圳", "湛江"]),
-    "陆桥通道": ("#8e44ad", ["连云港", "郑州", "西安", "兰州", "乌鲁木齐"]),
-    "沪昆通道": ("#c0392b", ["上海", "南昌", "长沙", "贵阳", "昆明"]),
-    "沿江通道": ("#2e86c1", ["上海", "南京", "合肥", "武汉", "重庆", "成都"]),
-    "青银通道": ("#117a65", ["青岛", "济南", "石家庄", "太原", "银川"]),
-    "厦渝通道": ("#7d8f3f", ["厦门", "长沙", "重庆"]),
-    "广昆通道": ("#a04000", ["广州", "南宁", "昆明"]),
-    "绥满通道": ("#5d6d7e", ["绥芬河", "哈尔滨", "满洲里"]),
+# 干线走向用「枢纽 + 沿线重要节点」的经纬度序列描述。
+# 旧实现只连枢纽城市（北京—济南—南京—上海），在图面上就是几根笔直的长线，
+# 与真实高铁走向（经德州、徐州、蚌埠，绕太湖东侧）差别明显，看起来像直尺画出来的。
+# 这里补入沿线真实车站所在城镇，并对折线做 Catmull-Rom 平滑。
+_WP = {  # 沿线节点：名称 -> (经度, 纬度)
+    "沧州": (116.84, 38.30), "德州": (116.36, 37.44), "曲阜": (116.99, 35.58),
+    "徐州": (117.19, 34.26), "宿州": (116.96, 33.65), "蚌埠": (117.39, 32.92),
+    "滁州": (118.32, 32.30), "镇江": (119.45, 32.20), "常州": (119.95, 31.81),
+    "苏州": (120.58, 31.30), "盐城": (120.16, 33.35), "南通": (120.86, 31.98),
+    "日照": (119.53, 35.42), "临沂": (118.36, 35.10), "潍坊": (119.16, 36.71),
+    "淄博": (118.05, 36.81), "秦皇岛": (119.60, 39.94), "唐山": (118.18, 39.63),
+    "锦州": (121.13, 41.10), "丹东": (124.38, 40.13), "温州": (120.70, 28.00),
+    "台州": (121.42, 28.66), "宁德": (119.55, 26.67), "泉州": (118.68, 24.87),
+    "汕头": (116.68, 23.35), "汕尾": (115.36, 22.79), "惠州": (114.41, 23.11),
+    "茂名": (110.93, 21.66), "北海": (109.12, 21.48),
+    "保定": (115.46, 38.87), "邢台": (114.51, 37.07), "邯郸": (114.54, 36.63),
+    "安阳": (114.39, 36.10), "新乡": (113.93, 35.30), "许昌": (113.85, 34.04),
+    "漯河": (114.03, 33.58), "驻马店": (114.02, 33.01), "信阳": (114.09, 32.15),
+    "岳阳": (113.13, 29.36), "衡阳": (112.57, 26.89), "郴州": (113.03, 25.78),
+    "韶关": (113.60, 24.81),
+    "大同": (113.30, 40.08), "包头": (109.84, 40.66), "张家口": (114.88, 40.82),
+    "中卫": (105.19, 37.51), "天水": (105.72, 34.58), "张掖": (100.45, 38.93),
+    "酒泉": (98.49, 39.73), "哈密": (93.51, 42.83), "吐鲁番": (89.19, 42.95),
+    "洛阳": (112.45, 34.62), "宝鸡": (107.24, 34.36),
+    "宜昌": (111.29, 30.69), "万州": (108.41, 30.81), "恩施": (109.49, 30.27),
+    "九江": (116.00, 29.71), "上饶": (117.97, 28.45), "金华": (119.65, 29.08),
+    "杭州东": (120.21, 30.29), "怀化": (110.00, 27.55), "凯里": (107.98, 26.58),
+    "曲靖": (103.80, 25.49), "六盘水": (104.85, 26.59),
+    "赣州": (114.93, 25.83), "吉安": (114.99, 27.11), "龙岩": (117.02, 25.08),
+    "常德": (111.70, 29.03), "黔江": (108.77, 29.53),
+    "阜阳": (115.81, 32.89), "商丘": (115.65, 34.44), "衡水": (115.67, 37.74),
+    "桂林": (110.29, 25.27), "柳州": (109.41, 24.33), "梧州": (111.30, 23.48),
+    "百色": (106.62, 23.90), "兴义": (104.90, 25.09), "钦州": (108.65, 21.98),
+    "牡丹江": (129.63, 44.55), "齐齐哈尔": (123.92, 47.35),
+    "海拉尔": (119.74, 49.22), "松原": (124.83, 45.14), "赤峰": (118.89, 42.26),
+    "通辽": (122.24, 43.65), "汉中": (107.03, 33.07), "广元": (105.84, 32.44),
+    "绵阳": (104.68, 31.47), "西昌": (102.27, 27.90), "攀枝花": (101.72, 26.58),
+    "安康": (109.03, 32.68), "延安": (109.49, 36.59), "邵阳": (111.47, 27.24),
+    "永州": (111.61, 26.42), "益阳": (112.36, 28.55), "焦作": (113.24, 35.22),
+    "长治": (113.12, 36.20), "襄阳": (112.14, 32.04),
+    "平顶山": (113.19, 33.77), "安庆": (117.05, 30.53),
 }
 
 
+def _pt(name):
+    """节点坐标：优先取全书统一城市表，其次取沿线补充表。"""
+    if name in CITY_XY:
+        return CITY_XY[name]
+    return _WP[name]
+
+
+def _smooth(pts, n=14):
+    """Catmull-Rom 样条加密，去掉折线的「直尺」感。
+
+    pts 为投影后的坐标序列；端点重复一次以确定切向。
+    """
+    if len(pts) < 3:
+        return [p[0] for p in pts], [p[1] for p in pts]
+    P = [pts[0]] + list(pts) + [pts[-1]]
+    xs, ys = [], []
+    for i in range(1, len(P) - 2):
+        p0, p1, p2, p3 = P[i - 1], P[i], P[i + 1], P[i + 2]
+        for k in range(n):
+            t = k / n
+            t2, t3 = t * t, t * t * t
+            for a, b, c, d, out in ((p0[0], p1[0], p2[0], p3[0], xs),
+                                    (p0[1], p1[1], p2[1], p3[1], ys)):
+                out.append(0.5 * ((2 * b) + (-a + c) * t
+                                  + (2 * a - 5 * b + 4 * c - d) * t2
+                                  + (-a + 3 * b - 3 * c + d) * t3))
+    xs.append(P[-2][0])
+    ys.append(P[-2][1])
+    return xs, ys
+
+
+RAIL_LINES = {  # 通道 -> (颜色, 沿线节点序列)
+    "京沪通道": ("#c0392b", ["北京", "天津", "沧州", "德州", "济南", "曲阜",
+                          "徐州", "蚌埠", "滁州", "南京", "镇江", "常州",
+                          "无锡", "苏州", "上海"]),
+    "京哈—京港澳通道": ("#1f618d", ["哈尔滨", "长春", "沈阳", "锦州", "秦皇岛",
+                                 "唐山", "北京", "保定", "石家庄", "邢台",
+                                 "邯郸", "安阳", "新乡", "郑州", "许昌",
+                                 "漯河", "驻马店", "信阳", "武汉", "岳阳",
+                                 "长沙", "衡阳", "郴州", "韶关", "广州",
+                                 "深圳", "香港"]),
+    "京港（台）通道": ("#7d3c98", ["北京", "衡水", "商丘", "阜阳", "合肥",
+                                "九江", "南昌", "吉安", "赣州", "惠州",
+                                "深圳", "香港"]),
+    "京昆通道": ("#6c3483", ["北京", "保定", "石家庄", "太原", "西安",
+                          "汉中", "广元", "绵阳", "成都", "西昌",
+                          "攀枝花", "昆明"]),
+    "呼南通道": ("#b03a2e", ["呼和浩特", "大同", "太原", "长治", "焦作",
+                          "郑州", "襄阳", "常德", "益阳", "邵阳",
+                          "永州", "桂林", "柳州", "南宁"]),
+    "包（银）海通道": ("#af601a", ["包头", "延安", "西安", "安康", "重庆",
+                                "贵阳", "南宁", "钦州", "湛江", "海口"]),
+    "兰（西）广通道": ("#b9770e", ["西宁", "兰州", "广元", "重庆", "贵阳",
+                                "桂林", "梧州", "广州"]),
+    "沿海通道": ("#1e8449", ["丹东", "大连", "秦皇岛", "天津", "潍坊",
+                          "青岛", "日照", "连云港", "盐城", "南通",
+                          "上海", "宁波", "台州", "温州", "宁德",
+                          "福州", "泉州", "厦门", "汕头", "汕尾",
+                          "深圳", "茂名", "湛江", "北海"]),
+    "绥满通道": ("#5d6d7e", ["绥芬河", "牡丹江", "哈尔滨", "齐齐哈尔",
+                          "海拉尔", "满洲里"]),
+    "京兰通道": ("#117a65", ["北京", "张家口", "呼和浩特", "包头", "银川",
+                          "中卫", "兰州"]),
+    "青银通道": ("#148f77", ["青岛", "潍坊", "淄博", "济南", "石家庄",
+                          "太原", "银川"]),
+    "陆桥通道": ("#8e44ad", ["连云港", "徐州", "商丘", "郑州", "洛阳",
+                          "西安", "宝鸡", "天水", "兰州", "西宁",
+                          "张掖", "酒泉", "哈密", "吐鲁番", "乌鲁木齐"]),
+    "沿江通道": ("#2e86c1", ["上海", "南京", "合肥", "武汉", "宜昌",
+                          "恩施", "万州", "重庆", "成都"]),
+    "沪昆通道": ("#c0392b", ["上海", "杭州东", "金华", "上饶", "南昌",
+                          "长沙", "怀化", "凯里", "贵阳", "六盘水",
+                          "曲靖", "昆明"]),
+    "厦渝通道": ("#7d8f3f", ["厦门", "龙岩", "赣州", "长沙", "常德",
+                          "黔江", "重庆"]),
+    "广昆通道": ("#a04000", ["广州", "梧州", "南宁", "百色", "兴义",
+                          "昆明"]),
+}
+
+# 通道名标注锚点（用节点名，标在该节点南侧 1.1°）
+RAIL_LABEL_AT = {
+    "京沪通道": "德州", "京哈—京港澳通道": "郑州", "京港（台）通道": "赣州",
+    "京昆通道": "广元", "呼南通道": "常德", "包（银）海通道": "贵阳",
+    "兰（西）广通道": "桂林", "沿海通道": "温州", "绥满通道": "齐齐哈尔",
+    "京兰通道": "包头", "青银通道": "太原", "陆桥通道": "酒泉",
+    "沿江通道": "恩施", "沪昆通道": "怀化", "厦渝通道": "常德",
+    "广昆通道": "百色",
+}
+
+
+def _hsr_legend(ax, loc=(0.015, 0.015)):
+    """通道图例。
+
+    16 条通道若都写成图内文字，在郑州—武汉—长沙这种枢纽密集区必然叠成一团
+    （实测 8 个通道名互相压字）。改为两列图例放在图幅左下空白处，
+    图内只保留线路与城市名，可读性最好，也避免文字盖住线位。
+    """
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color=c, lw=2.4, label=n)
+               for n, (c, _) in RAIL_LINES.items()]
+    leg = ax.legend(handles=handles, loc="lower left", bbox_to_anchor=loc,
+                    ncol=2, fontsize=7.4, framealpha=0.94,
+                    edgecolor="#cccccc", title="“八纵八横”通道", title_fontsize=8.2,
+                    handlelength=2.0, columnspacing=0.9, labelspacing=0.42,
+                    borderpad=0.6)
+    leg.set_zorder(30)
+    return leg
+
+
+RAIL_HUBS_MAJOR = ["北京", "上海", "广州", "武汉", "西安", "成都",
+                   "重庆", "郑州", "兰州", "乌鲁木齐"]
+RAIL_HUBS_MID = ["哈尔滨", "沈阳", "南京", "杭州", "长沙", "昆明", "贵阳",
+                 "南宁", "福州", "厦门", "青岛", "济南", "太原", "合肥",
+                 "南昌", "石家庄", "呼和浩特", "银川", "西宁", "海口",
+                 "深圳", "长春"]
+
+
 def fig12_3_hsr():
-    fig, ax = new_map_axes((10.5, 10.8))
-    _map_base(ax)
-    _prov_frame(ax)
-    for name, (c, cities) in RAIL_LINES.items():
-        xs, ys = zip(*[to_albers(*CITY_XY[ct]) for ct in cities])
-        ax.plot(xs, ys, color=c, lw=2.0, alpha=0.85, solid_capstyle="round",
-                zorder=6)
-        override = {"京昆通道": "西安", "兰（西）广通道": "贵阳",
-                    "沿江通道": "武汉", "青银通道": "太原",
-                    "京哈—京港澳通道": "郑州"}
-        mid = override.get(name, cities[len(cities) // 2])
-        lo, la = CITY_XY[mid]
-        ax.text(*to_albers(lo, la - 1.1), name, fontsize=7.6, color=c,
-                ha="center", zorder=8,
-                bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="none",
-                          alpha=0.85))
-    for ct, (lo, la) in CITY_XY.items():
-        if ct in ("绥芬河", "满洲里"):
+    dem, extent, prov, dash = _dem_base()
+    # 按数据范围定画幅比例：set_aspect("equal") 下画幅与数据比例不一致，
+    # axes 内会留出大片纯色空边（看起来像"海面漫到陆地上方"）。
+    minx, miny, maxx, maxy = prov.total_bounds
+    ax_ratio = (maxx - minx) / (maxy - miny)
+    figsize = (10.6 * ax_ratio, 10.6)
+    fig, ax = new_map_axes(figsize)
+    ax.set_facecolor(C_SEA)
+    ax.imshow(_relief(dem), extent=extent, origin="upper",
+              interpolation="bilinear", zorder=1)
+    draw_borders(ax, prov, dash, z=3)
+
+    for name, (c, nodes) in RAIL_LINES.items():
+        pts = [to_albers(*_pt(n)) for n in nodes]
+        xs, ys = _smooth(pts)
+        ax.plot(xs, ys, color=c, lw=1.9, alpha=0.92, solid_capstyle="round",
+                solid_joinstyle="round", zorder=6)
+
+    placer = LabelPlacer(ax, fig)
+    for ct in RAIL_HUBS_MAJOR + RAIL_HUBS_MID:
+        if ct not in CITY_XY:
             continue
-    set_extent_from(ax, _prov_frame(ax) if False else
-                    __import__("geopandas").read_file(
-                        os.path.join(DATA, "boundaries", "datav",
-                                     "100000_full.json")).to_crs(ALBERS))
-    add_title(ax, "“八纵八横”高速铁路网（简化示意）",
-              "以中心城市为节点的干线通道；2024 年高铁营业里程 4.8 万 km，居世界第一")
+        x, y = to_albers(*CITY_XY[ct])
+        major = ct in RAIL_HUBS_MAJOR
+        ax.plot([x], [y], "o", ms=3.8 if major else 3.0, mfc="white",
+                mec="#2c3e50", mew=0.95, zorder=9)
+        placer.add(x, y, ct, color="#1a1a1a", fs=8.6 if major else 7.8,
+                   priority=0 if major else 1,
+                   weight="bold" if major else "normal",
+                   leader=False, max_radius=2.45, zorder=14)
+
+    set_extent_from(ax, prov)
+    reserve_axes_boxes(placer, ax, [(0.00, 0.00, 0.30, 0.26)])
+    placer.flush()
+
+    _hsr_legend(ax)
+    add_title(ax, "“八纵八横”高速铁路网",
+              "干线经沿线主要节点城市；2024 年高铁营业里程 4.8 万 km，居世界第一")
     save_fig(fig, ax, "fig12-3_八纵八横高铁网.png",
-             footer="线路为简化示意（直线连接枢纽城市），依据《中长期铁路网规划》；底图：AWS Terrain Tiles\n"
+             footer="线路按《中长期铁路网规划》通道走向、经沿线节点城市描绘，为走向示意而非精确线位；"
+                    "底图：AWS Terrain Tiles；投影：Albers 等积圆锥\n"
                     "示意地图，不作为权属划界依据")
 
 
